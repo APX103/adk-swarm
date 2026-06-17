@@ -341,13 +341,13 @@
     <div class="layer">
       <div class="node node-orchestrator">
         <div class="name">🎯 main_agent (Orchestrator)</div>
-        <div class="desc">Python ADK Agent<br>自主路由 + 工具调用<br>Session 持久化 / 上下文压缩</div>
-        <div class="port">:8080 (adk web / file server)</div>
+        <div class="desc">Python ADK Agent<br>自主路由 + 工具调用<br>Session 持久化 / 上下文压缩<br>也暴露 A2A 端点 (被 eino_agent 回调)</div>
+        <div class="port">:8080 (adk web) / :8081 (A2A)</div>
       </div>
     </div>
 
     <div class="connector">
-      <span class="connector-label">A2A JSON-RPC 2.0</span>
+      <span class="connector-label">A2A JSON-RPC 2.0 (双向)</span>
     </div>
 
     <!-- Layer 2: Sub-Agents -->
@@ -363,9 +363,9 @@
         <div class="port">:8002 (Docker)</div>
       </div>
       <div class="node node-subagent" style="background: linear-gradient(135deg, #0e4f3b, #34d399); border-color: #6ee7b7;">
-        <div class="name">🌤️ eino_agent</div>
-        <div class="desc">Go + CloudWeGo Eino<br>天气查询 (get_weather 工具)<br>手动 A2A JSON-RPC 实现</div>
-        <div class="port">:8005 (Docker)</div>
+        <div class="name">🌤️ eino_agent (双向调度)</div>
+        <div class="desc">Go + CloudWeGo Eino<br>天气查询 · 调 main_agent 获取时间<br>调 comedian 讲笑话 · Dev UI</div>
+        <div class="port">:8005 (A2A + Dev UI)</div>
       </div>
     </div>
 
@@ -538,6 +538,41 @@
   </div>
 </div>
 
+<!-- ===== 3.6 双向调度: eino_agent 回调 main_agent ===== -->
+<div class="section">
+  <div class="section-title">3.6 双向调度: eino_agent ↔ main_agent / comedian</div>
+  <div class="flow-diagram">
+    <div class="flow-steps">
+      <div class="flow-step">
+        <div class="step-num">1</div>
+        <div class="step-content">用户 → eino_agent</div>
+        <div class="step-detail">"现在几点了"<br>(via Dev UI :8005/ui)</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step" style="background: #0e4f3b; border: 1px solid #34d399;">
+        <div class="step-num">2</div>
+        <div class="step-content">eino_agent (Go)</div>
+        <div class="step-detail">LLM 判断:<br>调 ask_main_agent</div>
+      </div>
+      <div class="flow-arrow" style="color: #f472b6;">⇄</div>
+      <div class="flow-step" style="background: #1e3a5f; border: 1px solid #3b82f6;">
+        <div class="step-num">3</div>
+        <div class="step-content">main_agent (Python)</div>
+        <div class="step-detail">A2A :8081 收到请求<br>LLM → get_current_time<br>返回时间</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step" style="background: #0e4f3b; border: 1px solid #6ee7b7;">
+        <div class="step-num">4</div>
+        <div class="step-content">eino_agent 回复</div>
+        <div class="step-detail">整理时间信息<br>→ 用户</div>
+      </div>
+    </div>
+    <div style="margin-top: 16px; font-size: 12px; color: #64748b; text-align: center;">
+      🔁 Go → Python → Go 跨语言双向调度 &nbsp;|&nbsp; eino_agent 同时可调度 comedian_agent 讲笑话
+    </div>
+  </div>
+</div>
+
 <!-- ===== 4. 技术栈 ===== -->
 <div class="section">
   <div class="section-title">4. 技术栈</div>
@@ -554,7 +589,7 @@
     </div>
     <div class="tech-card">
       <div class="tech-name">eino_agent</div>
-      <div class="tech-desc">Go 1.21 + CloudWeGo Eino (v0.8.11)。手动实现 A2A JSON-RPC Server，内嵌 get_weather MCP 风格工具，ReAct 模式执行。</div>
+      <div class="tech-desc">Go 1.21 + CloudWeGo Eino (v0.8.11)。手动实现 A2A JSON-RPC Server + Client，具备双向调度能力：内嵌 get_weather 工具、回调 main_agent 获取时间、调度 comedian 讲笑话。自带 Dev UI (/ui)。</div>
       <span class="tech-tag tag-go">Go</span>
     </div>
     <div class="tech-card">
@@ -630,12 +665,11 @@
   <div class="section-title">6. eino_agent (Go) — 已实现的跨语言 Agent</div>
 
   <div class="integration-box">
-    <h3>核心亮点：跨语言 A2A 通信已完全调通</h3>
+    <h3>核心亮点：跨语言双向 A2A 调度已完全调通</h3>
     <p style="font-size: 13px; color: #94a3b8; margin-top: 8px; line-height: 1.6;">
-      eino_agent 是一个用 Go 语言 + CloudWeGo Eino 框架编写的 A2A 子 Agent。
-      它手动实现了 A2A v0.3.0 JSON-RPC 服务端（因 <code style="background:#0f172a;padding:2px 6px;border-radius:4px;">a2a-go</code> SDK 要求 Go 1.24+），
-      直接暴露 <code style="background:#0f172a;padding:2px 6px;border-radius:4px;">/.well-known/agent-card.json</code> 和 <code style="background:#0f172a;padding:2px 6px;border-radius:4px;">POST /</code> (message/send)，
-      在 Docker Compose 中通过服务名 DNS 与 Python orchestrator 互通。
+      eino_agent 是一个用 Go 语言 + CloudWeGo Eino 框架编写的 <strong>双向 A2A Agent</strong>。
+      既是 A2A 服务端（被 main_agent 调用查天气），又是 A2A 客户端（回调 main_agent 获取时间、调度 comedian 讲笑话）。
+      自带 Dev Web UI（<code style="background:#0f172a;padding:2px 6px;border-radius:4px;">:8005/ui</code>），可独立对话和测试。
     </p>
 
     <div class="comparison">
@@ -650,14 +684,15 @@
         </ul>
       </div>
       <div class="comparison-col">
-        <h4 style="color: #34d399;">🔵 Go eino_agent (手动实现)</h4>
+        <h4 style="color: #34d399;">🔵 Go eino_agent (手动实现 + 双向调度)</h4>
         <ul>
-          <li><code>net/http</code> 手动实现 A2A JSON-RPC</li>
+          <li><code>net/http</code> 手动实现 A2A Server + Client</li>
           <li>AgentCard 硬编码 + <code>SERVICE_NAME</code> 动态 URL</li>
           <li>Eino Runner (<code>adk.NewRunner</code>) 执行 agent</li>
           <li>Agent = <code>adk.NewChatModelAgent()</code></li>
-          <li>工具 = <code>utils.InferTool()</code> 自动推断</li>
-          <li>437 行 Go 代码，单文件 <code>main.go</code></li>
+          <li>3 个工具: get_weather / ask_main_agent / ask_comedian</li>
+          <li>Dev UI: <code>/ui</code> 内嵌 HTML 聊天界面</li>
+          <li>~600 行 Go 代码，单文件 <code>main.go</code></li>
         </ul>
       </div>
     </div>
@@ -687,6 +722,21 @@
           <td><strong>get_weather 工具</strong></td>
           <td>MCP 风格工具：输入城市名 → 输出天气报告<br>温度/天气/湿度/风力</td>
           <td><code>utils.InferTool()</code></td>
+        </tr>
+        <tr>
+          <td><strong>ask_main_agent 工具</strong></td>
+          <td>A2A 客户端工具：调用 main_agent (Python) 获取时间等<br>Go HTTP Client → JSON-RPC → main_agent:8081</td>
+          <td><code>utils.InferTool()</code> + A2A Client</td>
+        </tr>
+        <tr>
+          <td><strong>ask_comedian 工具</strong></td>
+          <td>A2A 客户端工具：调用 comedian_agent 讲笑话<br>Go HTTP Client → JSON-RPC → comedian:8003</td>
+          <td><code>utils.InferTool()</code> + A2A Client</td>
+        </tr>
+        <tr>
+          <td><strong>Dev Web UI</strong></td>
+          <td>内嵌 HTML 聊天界面，<code>/ui</code> 路径访问<br>展示消息、工具调用、Agent 委派记录</td>
+          <td>Go <code>net/http</code> + 内嵌 HTML</td>
         </tr>
         <tr>
           <td><strong>Docker 集成</strong></td>
@@ -805,8 +855,42 @@ POST http://eino_agent:8005/
         </div>
       </div>
     </div>
+    <h3 style="margin-top: 24px; margin-bottom: 16px; color: #f472b6;">⇄ 反向: eino_agent → main_agent / comedian 链路</h3>
+    <div class="flow-diagram">
+      <div class="flow-steps" style="flex-wrap: wrap; gap: 8px;">
+        <div class="flow-step" style="background: #0e4f3b; border: 1px solid #34d399; min-width: 120px;">
+          <div class="step-num">Client</div>
+          <div class="step-content">Go A2A Client</div>
+          <div class="step-detail">ask_main_agent 工具<br>HTTP POST JSON-RPC</div>
+        </div>
+        <div class="flow-arrow" style="font-size: 14px;">→</div>
+        <div class="flow-step" style="background: #0f172a; border: 1px solid #475569; min-width: 80px;">
+          <div class="step-num">Transport</div>
+          <div class="step-content">HTTP</div>
+          <div class="step-detail">JSON-RPC 2.0<br>message/send</div>
+        </div>
+        <div class="flow-arrow" style="font-size: 14px;">→</div>
+        <div class="flow-step" style="background: #1e3a5f; border: 1px solid #3b82f6; min-width: 120px;">
+          <div class="step-num">Server</div>
+          <div class="step-content">to_a2a() :8081</div>
+          <div class="step-detail">main_agent A2A<br>(守护线程)</div>
+        </div>
+        <div class="flow-arrow" style="font-size: 14px;">→</div>
+        <div class="flow-step" style="background: #1e3a5f; border: 1px solid #6366f1; min-width: 100px;">
+          <div class="step-num">Executor</div>
+          <div class="step-content">root_agent</div>
+          <div class="step-detail">Runner → LLM<br>get_current_time</div>
+        </div>
+        <div class="flow-arrow" style="font-size: 14px;">→</div>
+        <div class="flow-step" style="background: #1e1a2e; border: 1px solid #a855f7; min-width: 100px;">
+          <div class="step-num">Response</div>
+          <div class="step-content">Task</div>
+          <div class="step-detail">artifacts → parts<br>JSON-RPC result</div>
+        </div>
+      </div>
+    </div>
     <p style="font-size: 12px; color: #64748b; text-align: center; margin-top: 12px;">
-      两条链路对 Orchestrator 完全透明 — RemoteA2aAgent 不感知后端语言，只看 A2A 协议
+      三条链路对调用方完全透明 — A2A 协议不区分语言，Go ⇄ Python 双向互调已调通
     </p>
   </div>
 </div>
@@ -825,6 +909,8 @@ POST http://eino_agent:8005/
     <br>│   ├── session.py          <span style="color: #64748b;"># SQLite Session 持久化</span>
     <br>│   ├── compression.py      <span style="color: #64748b;"># 上下文压缩</span>
     <br>│   ├── file_server.py      <span style="color: #64748b;"># FastAPI 静态文件服务</span>
+    <br>│   ├── a2a_server.py       <span style="color: #64748b;"># A2A 端点 (:8081), 被 eino_agent 回调</span>
+    <br>│   ├── entrypoint.sh      <span style="color: #64748b;"># Docker 入口: A2A server + adk web</span>
     <br>│   ├── Dockerfile          <span style="color: #64748b;"># 容器镜像</span>
     <br>│   └── test_*.py           <span style="color: #64748b;"># 编排/路由验证测试</span>
     <br>├── <span style="color: #a855f7;">frontend_agent/</span>        <span style="color: #64748b;"># ─── 前端子 Agent ───</span>
@@ -835,8 +921,8 @@ POST http://eino_agent:8005/
     <br>│   │   ├── builder.ts      <span style="color: #64748b;"># npm install + build + verify</span>
     <br>│   │   └── packer.ts       <span style="color: #64748b;"># tar.gz 打包</span>
     <br>│   └── Dockerfile
-    <br>├── <span style="color: #34d399;">eino_agent/</span>             <span style="color: #64748b;"># ─── Go Eino Agent (跨语言) ───</span>
-    <br>│   ├── main.go             <span style="color: #64748b;"># A2A Server + Eino Agent + 天气工具</span>
+    <br>├── <span style="color: #34d399;">eino_agent/</span>             <span style="color: #64748b;"># ─── Go Eino Agent (双向调度) ───</span>
+    <br>│   ├── main.go             <span style="color: #64748b;"># A2A Server/Client + Eino Agent + 3 工具 + Dev UI</span>
     <br>│   ├── go.mod / go.sum     <span style="color: #64748b;"># Go 模块依赖</span>
     <br>│   └── Dockerfile          <span style="color: #64748b;"># 多阶段构建 (golang:1.21 → alpine)</span>
     <br>├── <span style="color: #10b981;">mock_agent/</span>             <span style="color: #64748b;"># ─── 后端 Mock Agent ───</span>
@@ -889,7 +975,7 @@ POST http://eino_agent:8005/
 </div>
 
 <div style="text-align: center; color: #475569; font-size: 12px; margin-top: 40px; padding-bottom: 20px;">
-  adk_swarm 架构文档 · 更新于 2026-06-17 · 含 eino_agent (Go) 跨语言集成
+  adk_swarm 架构文档 · 更新于 2026-06-17 · Go ⇄ Python 双向 A2A 调度 · eino_agent Dev UI
 </div>
 
 </body>

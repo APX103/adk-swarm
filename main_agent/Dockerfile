@@ -27,6 +27,9 @@ COPY main_agent/__init__.py ./main_agent/__init__.py
 COPY main_agent/artifacts/ ./main_agent/artifacts/
 COPY main_agent/test_orchestration.py ./main_agent/test_orchestration.py
 COPY main_agent/test_subagent.py ./main_agent/test_subagent.py
+COPY main_agent/a2a_server.py ./main_agent/a2a_server.py
+COPY main_agent/entrypoint.sh ./main_agent/entrypoint.sh
+RUN chmod +x ./main_agent/entrypoint.sh
 
 # Copy other packages.
 COPY mock_agent/agent.py ./mock_agent/agent.py

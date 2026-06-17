@@ -24,6 +24,7 @@ services:
       dockerfile: main_agent/Dockerfile
     ports:
       - "8080:8080"    # adk web UI + artifact serving
+      - "8081:8081"    # A2A server (called by eino_agent)
     environment:
       - OPENAI_BASE_URL=${OPENAI_BASE_URL}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
@@ -36,12 +37,14 @@ services:
       - EINO_AGENT_URL=http://eino_agent:8005
       - MCP_SERVERS=
       - FILE_SERVER_PORT=8080
+      - MAIN_AGENT_A2A_PORT=8081
+      - SERVICE_NAME=main_agent
       - SESSIONS_DB_PATH=/app/data/sessions.db
       - ADK_WEB=true
     volumes:
       - main_agent_artifacts:/app/artifacts
       - main_agent_sessions:/app/data
-    command: ["adk", "web", ".", "--host", "0.0.0.0", "--port", "8080"]
+    command: ["bash", "./main_agent/entrypoint.sh"]
     depends_on:
       frontend_agent:
         condition: service_healthy
@@ -126,6 +129,8 @@ services:
       - OPENAI_BASE_URL=${OPENAI_BASE_URL}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_MODEL=${OPENAI_MODEL:-glm-4.5-air}
+      - MAIN_AGENT_A2A_URL=http://main_agent:8081
+      - COMEDIAN_AGENT_URL=http://comedian:8003
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8005/.well-known/agent-card.json"]
       interval: 10s
