@@ -151,8 +151,6 @@ services:
       - OPENAI_BASE_URL=${OPENAI_BASE_URL}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_MODEL=${OPENAI_MODEL:-glm-4.5-air}
-      - MAIN_AGENT_A2A_URL=http://main_agent:8081
-      - COMEDIAN_AGENT_URL=http://comedian:8003
       - AGENT_REGISTRY_URL=http://agent_registry:8006
     depends_on:
       agent_registry:

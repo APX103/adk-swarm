@@ -12,6 +12,9 @@ import (
 	"strings"
 	"time"
 
+	mcpclient "github.com/mark3labs/mcp-go/client"
+	"github.com/mark3labs/mcp-go/mcp"
+
 	"github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/components/tool"
@@ -29,63 +32,110 @@ func envOr(key, fallback string) string {
 }
 
 // =====================================================================
-// Agent Registry — dynamic endpoint discovery
+// Agent Registry — MCP client: self-registration + discovery
+//
+// The registry is exposed as an MCP server (SSE at <url>/sse) with two tools:
+//   - register_agent(name, url, description, type)
+//   - list_agents()  -> {agents:[{name,url,description,type}, ...]} (healthy only)
+//
+// We connect via MCP (not REST) so this same pattern works for any MCP-capable
+// agent in any language: connect the SSE endpoint, get register+discover tools.
+// Actual agent-to-agent calls still go P2P over A2A (message/send) — the
+// registry is a phonebook, not a relay.
 // =====================================================================
 
-type RegistryAgent struct {
+// RegistryClient wraps an MCP SSE connection to the agent registry.
+type RegistryClient struct {
+	sseURL string
+	cli    *mcpclient.Client
+}
+
+// AgentEntry is one agent in the registry's list_agents result.
+type AgentEntry struct {
 	Name        string `json:"name"`
 	URL         string `json:"url"`
 	Description string `json:"description"`
 	Type        string `json:"type"`
 }
 
-type RegistryResponse struct {
-	Agents []RegistryAgent `json:"agents"`
-}
-
-var registryCache = map[string]string{}
-var registryFetched bool
-
-func fetchRegistryAgents(registryURL string) map[string]string {
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(strings.TrimRight(registryURL, "/") + "/agents")
+// NewRegistryClient connects to the registry's MCP SSE endpoint and initializes
+// the session. Returns error if the registry is unreachable; callers should
+// treat this as non-fatal (the agent can still run, just without discovery).
+func NewRegistryClient(ctx context.Context, registryURL string) (*RegistryClient, error) {
+	sseURL := strings.TrimRight(registryURL, "/") + "/sse"
+	cli, err := mcpclient.NewSSEMCPClient(sseURL)
 	if err != nil {
-		log.Printf("[eino_agent] registry fetch failed: %v", err)
-		return nil
+		return nil, fmt.Errorf("create SSE client: %w", err)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		log.Printf("[eino_agent] registry returned %d", resp.StatusCode)
-		return nil
+	// Must Start before Initialize for SSE transport.
+	if err := cli.Start(ctx); err != nil {
+		return nil, fmt.Errorf("start SSE client: %w", err)
 	}
-	var r RegistryResponse
-	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
-		log.Printf("[eino_agent] registry decode failed: %v", err)
-		return nil
+	initReq := mcp.InitializeRequest{}
+	initReq.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+	initReq.Params.ClientInfo = mcp.Implementation{Name: "eino_agent", Version: "2.1.0"}
+	if _, err := cli.Initialize(ctx, initReq); err != nil {
+		return nil, fmt.Errorf("initialize MCP session: %w", err)
 	}
-	out := make(map[string]string, len(r.Agents))
-	for _, a := range r.Agents {
-		if a.Name != "" && a.URL != "" {
-			out[a.Name] = a.URL
-		}
-	}
-	log.Printf("[eino_agent] registry loaded %d agents", len(out))
-	return out
+	log.Printf("[eino_agent] connected to registry MCP at %s", sseURL)
+	return &RegistryClient{sseURL: sseURL, cli: cli}, nil
 }
 
-func getAgentURL(name, fallback string) string {
-	if !registryFetched {
-		if registryURL := os.Getenv("AGENT_REGISTRY_URL"); registryURL != "" {
-			if m := fetchRegistryAgents(registryURL); m != nil {
-				registryCache = m
+// Close releases the MCP session.
+func (rc *RegistryClient) Close() error {
+	if rc.cli == nil {
+		return nil
+	}
+	return rc.cli.Close()
+}
+
+// RegisterSelf registers this agent into the registry. Non-fatal on failure.
+func (rc *RegistryClient) RegisterSelf(ctx context.Context, name, url, description, agentType string) {
+	req := mcp.CallToolRequest{}
+	req.Params.Name = "register_agent"
+	req.Params.Arguments = map[string]any{
+		"name":        name,
+		"url":         url,
+		"description": description,
+		"type":        agentType,
+	}
+	_, err := rc.cli.CallTool(ctx, req)
+	if err != nil {
+		log.Printf("[eino_agent] self-registration failed (non-fatal): %v", err)
+		return
+	}
+	log.Printf("[eino_agent] registered self as %q @ %s", name, url)
+}
+
+// ListAgents returns the currently-reachable agents (excluding self).
+func (rc *RegistryClient) ListAgents(ctx context.Context, selfName string) []AgentEntry {
+	req := mcp.CallToolRequest{}
+	req.Params.Name = "list_agents"
+	res, err := rc.cli.CallTool(ctx, req)
+	if err != nil {
+		log.Printf("[eino_agent] list_agents failed: %v", err)
+		return nil
+	}
+	// MCP tool returns content[].text holding JSON: {"agents":[...]}
+	var out []AgentEntry
+	for _, c := range res.Content {
+		if tc, ok := c.(mcp.TextContent); ok && tc.Text != "" {
+			var payload struct {
+				Agents []AgentEntry `json:"agents"`
+			}
+			if err := json.Unmarshal([]byte(tc.Text), &payload); err == nil {
+				out = append(out, payload.Agents...)
 			}
 		}
-		registryFetched = true
 	}
-	if url, ok := registryCache[name]; ok {
-		return url
+	// Filter out self.
+	filtered := out[:0]
+	for _, a := range out {
+		if a.Name != selfName {
+			filtered = append(filtered, a)
+		}
 	}
-	return envOr(name+"_URL", fallback)
+	return filtered
 }
 
 // =====================================================================
@@ -119,6 +169,23 @@ func getWeather(_ context.Context, input *WeatherInput) (*WeatherOutput, error) 
 	report := fmt.Sprintf("%s：%s，气温 %d°C，湿度 %d%%，风力 %d 级。",
 		city, conditions[seed], temps[seed], humidity, wind)
 	return &WeatherOutput{Report: report}, nil
+}
+
+// =====================================================================
+// Time Tool (built-in)
+// =====================================================================
+
+type EmptyInput struct{}
+
+type TimeOutput struct {
+	Time string `json:"time"`
+}
+
+func getTime(_ context.Context, _ *EmptyInput) (*TimeOutput, error) {
+	now := time.Now()
+	return &TimeOutput{
+		Time: now.Format("2006-01-02 15:04:05 MST"),
+	}, nil
 }
 
 // =====================================================================
@@ -236,43 +303,99 @@ func partsText(m map[string]interface{}) []string {
 }
 
 // =====================================================================
-// Delegation Tools — ask_main_agent & ask_comedian
+// Delegation Tools — dynamically built from registry discovery
+//
+// For each agent discovered via list_agents(), we build a closure-backed tool
+// that calls it over A2A (message/send). This is P2P: the registry only told
+// us the URL; we contact the peer directly.
 // =====================================================================
 
-type AskMainAgentInput struct {
-	Request string `json:"request" jsonschema:"description=要询问主调度Agent(main_agent)的问题，例如获取当前时间。"`
+type DelegateInput struct {
+	Request string `json:"request" jsonschema:"description=要发送给该 Agent 的请求内容。"`
 }
 
 type DelegateOutput struct {
 	Response string `json:"response"`
 }
 
-func askMainAgent(_ context.Context, input *AskMainAgentInput) (*DelegateOutput, error) {
-	url := getAgentURL("main_agent", "http://localhost:8081")
-	log.Printf("[eino_agent] → 调用 main_agent: %s", truncate(input.Request, 100))
-	resp, err := callA2AAgent(url, input.Request)
-	if err != nil {
-		log.Printf("[eino_agent] ✗ main_agent 调用失败: %v", err)
-		return nil, fmt.Errorf("main_agent 调用失败: %w", err)
+// buildDelegateTools turns discovered agents into A2A delegate tools.
+func buildDelegateTools(peers []AgentEntry) []tool.BaseTool {
+	var tools []tool.BaseTool
+	for _, p := range peers {
+		peer := p // capture
+		fn := func(_ context.Context, input *DelegateInput) (*DelegateOutput, error) {
+			log.Printf("[eino_agent] → 调用 %s: %s", peer.Name, truncate(input.Request, 100))
+			resp, err := callA2AAgent(peer.URL, input.Request)
+			if err != nil {
+				log.Printf("[eino_agent] ✗ %s 调用失败: %v", peer.Name, err)
+				return nil, fmt.Errorf("%s 调用失败: %w", peer.Name, err)
+			}
+			log.Printf("[eino_agent] ← %s 返回: %s", peer.Name, truncate(resp, 200))
+			return &DelegateOutput{Response: resp}, nil
+		}
+		// Tool name derived from agent name; description guides the LLM to route.
+		toolName := "ask_" + sanitizeToolName(peer.Name)
+		desc := peer.Description
+		if desc == "" {
+			desc = "通过 A2A 调用 " + peer.Name + " agent。"
+		}
+		t, err := utils.InferTool(toolName, desc, fn)
+		if err != nil {
+			log.Printf("[eino_agent] skip delegate tool for %s: %v", peer.Name, err)
+			continue
+		}
+		tools = append(tools, t)
 	}
-	log.Printf("[eino_agent] ← main_agent 返回: %s", truncate(resp, 200))
-	return &DelegateOutput{Response: resp}, nil
+	return tools
 }
 
-type AskComedianInput struct {
-	Request string `json:"request" jsonschema:"description=要让笑话Agent(comedian)做的事情，例如讲一个关于某主题的笑话。"`
+func sanitizeToolName(s string) string {
+	out := make([]byte, 0, len(s))
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' {
+			out = append(out, byte(r))
+		} else {
+			out = append(out, '_')
+		}
+	}
+	return string(out)
 }
 
-func askComedian(_ context.Context, input *AskComedianInput) (*DelegateOutput, error) {
-	url := getAgentURL("comedian_agent", "http://localhost:8003")
-	log.Printf("[eino_agent] → 调用 comedian: %s", truncate(input.Request, 100))
-	resp, err := callA2AAgent(url, input.Request)
-	if err != nil {
-		log.Printf("[eino_agent] ✗ comedian 调用失败: %v", err)
-		return nil, fmt.Errorf("comedian 调用失败: %w", err)
+// delegateToolsHelp renders the discovered peers for the agent instruction.
+func delegateToolsHelp(peers []AgentEntry) string {
+	if len(peers) == 0 {
+		return "（当前集群没有发现其他 Agent）"
 	}
-	log.Printf("[eino_agent] ← comedian 返回: %s", truncate(resp, 200))
-	return &DelegateOutput{Response: resp}, nil
+	var lines []string
+	for _, p := range peers {
+		desc := p.Description
+		if desc == "" {
+			desc = "（无描述）"
+		}
+		lines = append(lines, fmt.Sprintf("- ask_%s: %s", sanitizeToolName(p.Name), desc))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// mustBuildListAgentsTool exposes a "list_registry_agents" LLM tool that
+// re-queries the registry at runtime (in case peers changed since startup).
+func mustBuildListAgentsTool(rc *RegistryClient, selfName string) tool.BaseTool {
+	type agentsResult struct {
+		Agents []AgentEntry `json:"agents"`
+	}
+	fn := func(ctx context.Context, _ *EmptyInput) (*agentsResult, error) {
+		peers := rc.ListAgents(ctx, selfName)
+		return &agentsResult{Agents: peers}, nil
+	}
+	t, err := utils.InferTool("list_registry_agents",
+		"重新发现集群中所有当前可用的 Agent。返回每个 Agent 的 name/url/description。"+
+			"当用户问'有哪些 agent'或你想确认能否调用某 agent 时使用。无需参数。",
+		fn)
+	if err != nil {
+		log.Printf("[eino_agent] failed to build list_registry_agents tool: %v", err)
+		return nil
+	}
+	return t
 }
 
 // =====================================================================
@@ -309,10 +432,10 @@ type Skill struct {
 func buildAgentCard(externalURL string) AgentCard {
 	return AgentCard{
 		Name: "eino_agent",
-		Description: "基于 CloudWeGo Eino 框架的 Go Agent。具备天气查询工具，" +
-			"并可通过 A2A 协议调度 main_agent（获取时间）和 comedian_agent（讲笑话）。",
+		Description: "基于 CloudWeGo Eino 框架的 Go Agent。具备天气查询、报时工具，" +
+			"并通过 Agent Registry（MCP 服务发现）接入集群，可调用集群中其他 Agent。",
 		URL:                externalURL,
-		Version:            "2.0.0",
+		Version:            "2.1.0",
 		ProtocolVersion:    "0.3.0",
 		PreferredTransport: "JSONRPC",
 		Capabilities:       &Capabilities{},
@@ -327,18 +450,18 @@ func buildAgentCard(externalURL string) AgentCard {
 				Examples:    []string{"查询北京天气", "上海今天天气怎么样"},
 			},
 			{
-				ID:          "delegate_time",
-				Name:        "获取时间 (via main_agent)",
-				Description: "通过 A2A 调用 main_agent 获取当前时间。",
-				Tags:        []string{"time", "a2a", "delegation"},
+				ID:          "time_query",
+				Name:        "获取时间",
+				Description: "使用内置 get_time 工具获取当前时间。",
+				Tags:        []string{"time", "tool"},
 				Examples:    []string{"现在几点了", "当前时间是多少"},
 			},
 			{
-				ID:          "delegate_joke",
-				Name:        "讲笑话 (via comedian_agent)",
-				Description: "通过 A2A 调用 comedian_agent 讲一个笑话。",
-				Tags:        []string{"joke", "humor", "a2a", "delegation"},
-				Examples:    []string{"讲个程序员笑话", "来个笑话听听"},
+				ID:          "cluster_discovery",
+				Name:        "集群服务发现",
+				Description: "通过 Agent Registry 发现并调用集群中的其他 Agent（A2A）。",
+				Tags:        []string{"discovery", "a2a", "mcp"},
+				Examples:    []string{"集群里有哪些 agent", "让笑话 agent 讲个笑话"},
 			},
 		},
 		SupportsAuthExt: false,
@@ -672,12 +795,13 @@ body{background:#0f172a;color:#e2e8f0;font-family:-apple-system,BlinkMacSystemFo
 <body>
 <div class="header">
   <h1>🌤️ Eino Agent — Dev UI</h1>
-  <p>Go + CloudWeGo Eino | A2A 双向调度</p>
+  <p>Go + CloudWeGo Eino | MCP 服务发现 + A2A P2P</p>
   <div class="badges">
     <span class="badge badge-go">Go 1.21</span>
     <span class="badge badge-tool">get_weather</span>
-    <span class="badge badge-a2a">→ main_agent (时间)</span>
-    <span class="badge badge-a2a">→ comedian (笑话)</span>
+    <span class="badge badge-tool">get_time</span>
+    <span class="badge badge-a2a">MCP → Registry</span>
+    <span class="badge badge-a2a">A2A P2P</span>
   </div>
 </div>
 <div class="messages" id="msgs"></div>
@@ -729,6 +853,8 @@ func main() {
 	modelName := envOr("OPENAI_MODEL", "glm-4.5-air")
 	apiKey := envOr("OPENAI_API_KEY", "")
 	baseURL := envOr("OPENAI_BASE_URL", "")
+	registryURL := envOr("AGENT_REGISTRY_URL", "")
+	selfName := "eino_agent"
 
 	chatModel, err := openai.NewChatModel(ctx, &openai.ChatModelConfig{
 		Model:   modelName,
@@ -739,49 +865,82 @@ func main() {
 		log.Fatalf("failed to create chat model: %v", err)
 	}
 
+	// Built-in tools.
 	weatherTool, err := utils.InferTool("get_weather",
 		"查询指定城市的天气信息（温度、天气状况、湿度、风力）。输入城市名称即可。",
 		getWeather)
 	if err != nil {
 		log.Fatalf("failed to create weather tool: %v", err)
 	}
-
-	mainAgentTool, err := utils.InferTool("ask_main_agent",
-		"通过 A2A 协议调用 main_agent（主调度Agent）。main_agent 可以获取当前时间、"+
-			"回答通用问题等。当用户询问当前时间或需要 main_agent 的能力时使用。",
-		askMainAgent)
+	timeTool, err := utils.InferTool("get_time",
+		"获取当前时间。无需参数。当用户询问现在几点、当前时间、日期时使用。",
+		getTime)
 	if err != nil {
-		log.Fatalf("failed to create ask_main_agent tool: %v", err)
+		log.Fatalf("failed to create time tool: %v", err)
 	}
 
-	comedianTool, err := utils.InferTool("ask_comedian",
-		"通过 A2A 协议调用 comedian_agent（笑话Agent）。当用户想听笑话、"+
-			"需要幽默内容时使用。给它一个主题即可。",
-		askComedian)
-	if err != nil {
-		log.Fatalf("failed to create ask_comedian tool: %v", err)
+	// Connect to the registry via MCP (self-register + discover peers).
+	var registry *RegistryClient
+	var peers []AgentEntry
+	if registryURL != "" {
+		rc, rerr := NewRegistryClient(ctx, registryURL)
+		if rerr != nil {
+			log.Printf("[eino_agent] registry MCP connect failed (non-fatal, running standalone): %v", rerr)
+		} else {
+			registry = rc
+			defer rc.Close()
+			// Register self so others can discover us.
+			rc.RegisterSelf(ctx, selfName, externalURL,
+				"基于 CloudWeGo Eino 的 Go Agent。具备天气查询、报时工具，并能通过 A2A 调用集群中其他 Agent。",
+				"orchestrator")
+			// Discover peers (snapshot at startup; list_agents MCP tool is also
+			// available to the LLM at runtime for re-discovery).
+			peers = rc.ListAgents(ctx, selfName)
+			log.Printf("[eino_agent] discovered %d peers via registry", len(peers))
+			for _, p := range peers {
+				log.Printf("[eino_agent]   - %s: %s", p.Name, p.URL)
+			}
+		}
+	} else {
+		log.Printf("[eino_agent] AGENT_REGISTRY_URL not set — running standalone (no discovery)")
 	}
+
+	// Build dynamic A2A delegate tools from discovered peers.
+	delegateTools := buildDelegateTools(peers)
+
+	// Also expose the registry's list_agents as an LLM tool (re-discovery).
+	var allTools []tool.BaseTool = []tool.BaseTool{weatherTool, timeTool}
+	allTools = append(allTools, delegateTools...)
+	if registry != nil {
+		allTools = append(allTools, mustBuildListAgentsTool(registry, selfName))
+	}
+
+	helpText := delegateToolsHelp(peers)
 
 	agent, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
-		Name:        "eino_agent",
-		Description: "基于 CloudWeGo Eino 框架的 Go Agent，具备天气查询、时间获取和讲笑话能力。",
+		Name:        selfName,
+		Description: "基于 CloudWeGo Eino 框架的 Go Agent，具备天气查询、报时能力，并通过服务发现调用集群中其他 Agent。",
 		Instruction: `你是一个基于 CloudWeGo Eino 框架的智能助手，运行在 Go 语言环境中。
-你具备以下能力：
+你通过 Agent Registry（MCP 服务发现）接入集群，并能直接调用集群中的其他 Agent。
+
+内置能力：
 1. 天气查询：使用 get_weather 工具查询任何城市的天气状况。
-2. 获取时间：使用 ask_main_agent 工具，让 main_agent 返回当前时间。
-3. 讲笑话：使用 ask_comedian 工具，让 comedian_agent 讲一个笑话。
-4. 通用对话：回答用户的各种问题。
+2. 获取时间：使用 get_time 工具获取当前时间。
+
+集群中的其他 Agent（通过服务发现动态获得，可用工具如下）：
+` + helpText + `
 
 规则：
 - 当用户询问天气时，必须调用 get_weather 工具获取数据，不要编造。
-- 当用户询问当前时间时，必须调用 ask_main_agent 工具获取，不要编造。
-- 当用户想听笑话或幽默内容时，必须调用 ask_comedian 工具获取，不要自己编笑话。
+- 当用户询问当前时间时，必须调用 get_time 工具获取，不要编造。
+- 当用户的请求匹配集群中某个 Agent 的能力时，使用对应的 ask_<agent> 工具委派给它。
+- 如果不确定集群里有什么，可调用 list_registry_agents 工具重新发现。
 - 使用简洁的中文回答。
 - 工具调用失败时如实告知用户。`,
 		Model: chatModel,
 		ToolsConfig: adk.ToolsConfig{
 			ToolsNodeConfig: compose.ToolsNodeConfig{
-				Tools: []tool.BaseTool{weatherTool, mainAgentTool, comedianTool},
+				Tools: allTools,
 			},
 		},
 		MaxIterations: 10,
@@ -796,10 +955,8 @@ func main() {
 	log.Printf("[eino_agent] A2A + Dev UI server on http://%s", addr)
 	log.Printf("[eino_agent] Agent card: http://%s/.well-known/agent-card.json", addr)
 	log.Printf("[eino_agent] Dev UI: http://%s/ui", addr)
-	log.Printf("[eino_agent] Model: %s | main_agent: %s | comedian: %s",
-		modelName,
-		envOr("MAIN_AGENT_A2A_URL", "http://localhost:8081"),
-		envOr("COMEDIAN_AGENT_URL", "http://localhost:8003"))
+	log.Printf("[eino_agent] Model: %s | registry: %s | peers: %d",
+		modelName, registryURL, len(peers))
 
 	if err := http.ListenAndServe(addr, srv); err != nil {
 		log.Fatalf("server error: %v", err)
