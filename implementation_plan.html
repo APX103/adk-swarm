@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Phase 0 实施计划 · 主 Agent + 前端子 Agent（Node / Docker / Vite+React）</title>
+  <script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({ startOnLoad: true, theme: 'default' });
+  </script>
+  <style>
+    :root {
+      --bg: #f7f9fc; --card: #ffffff; --text: #1f2937; --muted: #6b7280;
+      --primary: #2563eb; --primary-soft: #dbeafe; --border: #e5e7eb;
+      --ok: #10b981; --warn: #f59e0b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: var(--bg); color: var(--text); line-height: 1.75;
+    }
+    .container { max-width: 1080px; margin: 0 auto; padding: 40px 24px; }
+    header { text-align: center; margin-bottom: 48px; }
+    h1 { font-size: 2rem; margin: 0 0 12px; }
+    .subtitle { color: var(--muted); font-size: 1.05rem; }
+    .badge { display: inline-block; background: var(--primary-soft); color: var(--primary); padding: 4px 12px; border-radius: 999px; font-size: 0.85rem; font-weight: 600; margin-top: 12px; }
+
+    .section { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 28px; margin-bottom: 24px; }
+    h2 { font-size: 1.4rem; margin: 0 0 18px; color: var(--primary); border-bottom: 2px solid var(--primary-soft); padding-bottom: 8px; }
+    h3 { font-size: 1.18rem; margin: 24px 0 12px; color: #1e40af; }
+    h4 { font-size: 1.05rem; margin: 18px 0 8px; color: #334155; }
+    p { margin: 10px 0; }
+    ul, ol { padding-left: 22px; }
+    li { margin: 8px 0; }
+    code { background: #f3f4f6; padding: 2px 6px; border-radius: 4px; font-family: "SFMono-Regular", Consolas, monospace; font-size: 0.9em; }
+    pre { background: #0f172a; color: #e2e8f0; padding: 16px; border-radius: 10px; overflow-x: auto; font-size: 0.9rem; }
+
+    .callout { background: #eff6ff; border-left: 4px solid var(--primary); padding: 14px 18px; border-radius: 0 10px 10px 0; margin: 16px 0; }
+    .callout.warn { background: #fffbeb; border-left-color: var(--warn); }
+    .decision { background: #f0fdf4; border-left: 4px solid var(--ok); padding: 14px 18px; border-radius: 0 10px 10px 0; margin: 16px 0; }
+
+    table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 0.95rem; }
+    th, td { text-align: left; padding: 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    th { background: #f8fafc; font-weight: 600; }
+    tr:hover { background: #f8fafc; }
+
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 18px; margin-top: 14px; }
+    .card { background: #f8fafc; border: 1px solid var(--border); border-radius: 12px; padding: 18px; }
+    .card strong { color: var(--primary); }
+
+    .mermaid { background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin: 16px 0; text-align: center; }
+
+    footer { text-align: center; color: var(--muted); font-size: 0.9rem; margin-top: 48px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Phase 0 实施计划：主 Agent + 前端子 Agent</h1>
+      <div class="subtitle">基于 ADK + A2A + Node/Docker，实现“一句话生成可运行的 Vite+React 前端工程”</div>
+      <div class="badge">待讨论确认 · 2026-06-16</div>
+    </header>
+
+    <div class="section">
+      <h2>0. 目标与范围</h2>
+      <p>
+        本 Phase 0 要验证整个<b>“主 Agent 委派 → 远程子 Agent 生成工程 → 子 Agent 在容器内调通 → 返回工程”</b>的闭环。
+      </p>
+      <ul>
+        <li><b>主 Agent：</b>用 Python ADK 实现，作为用户对话入口。收到“写个前端页面”类需求后，通过 A2A 把任务派发给前端子 Agent。</li>
+        <li><b>前端子 Agent：</b>用 <b>Node.js</b> 实现，跑在 <b>Docker Container</b> 里。擅长 Vite + React，能生成完整工程并在容器内完成 <code>npm install</code> + <code>npm run build</code>（或启动 dev server 验证）。</li>
+        <li><b>交付物：</b>一个可本地一键运行的 PoC，包含主 Agent、前端子 Agent、Docker 配置和说明文档。</li>
+      </ul>
+      <div class="decision">
+        <strong>已确认前提：</strong>不同 Agent 跑在不同 Container；外部接入强制 A2A；主 Agent 模型自主决策为主；不记录 Agent 间完整 Message，只记录 Task 级元数据。
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>1. 技术栈选择（已按你的选择更新）</h2>
+      <table>
+        <tr><th>组件</th><th>技术</th><th>理由</th></tr>
+        <tr><td>主 Agent</td><td>Python + <code>google-adk[a2a]</code></td><td>利用 ADK 的 RemoteA2aAgent / sub_agents 做编排</td></tr>
+        <tr><td>前端子 Agent</td><td>Node.js 20 + <b>ADK TypeScript</b>（<code>@google/adk</code>）</td><td>用户指定 Node + ADK TS；用 <code>toA2a()</code> 原生暴露 A2A 服务</td></tr>
+        <tr><td>前端子 Agent 运行方式</td><td>Docker Container（node:20-slim）</td><td>容器内自带 npm/node，可直接生成并验证 Vite+React 工程</td></tr>
+        <tr><td>Agent 间通信</td><td>A2A Protocol（JSON-RPC over HTTP）</td><td>已强制；前端 Agent 暴露 <code>/.well-known/agent-card.json</code></td></tr>
+        <tr><td>前端子 Agent 内部 LLM</td><td><b>OpenAI 兼容 API</b>（baseURL 可配）</td><td>统一使用你指定的 endpoint 生成代码</td></tr>
+        <tr><td>工程构建</td><td>Vite + React</td><td>用户指定；生成现代前端工程</td></tr>
+        <tr><td>产物服务</td><td>主 Agent 内嵌 FastAPI 静态文件服务</td><td>让用户能直接下载前端子 Agent 返回的 <code>tar.gz</code></td></tr>
+        <tr><td>容器化</td><td>Docker + docker-compose</td><td>调试方便，后续可直接上 K8s</td></tr>
+      </table>
+      <div class="decision">
+        <strong>已确认选择：</strong>1B（ADK TypeScript）+ 2A（A2A Artifact 返回 tar.gz）+ 3B（必须启动 dev server 验证）+ 4（统一 OpenAI API）+ 5（主 Agent 提供文件服务）。
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>2. 目录结构</h2>
+      <pre><code>adk_swarm/
+├── requirements_summary.html
+├── research_report.html
+├── implementation_plan.html           # 本文档
+├── main_agent/                        # 主 Agent（Python ADK）
+│   ├── agent.py                       # root_agent 定义
+│   ├── file_server.py                 # FastAPI 静态文件服务（下载产物）
+│   ├── pyproject.toml / requirements.txt
+│   └── README.md
+├── frontend_agent/                    # 前端子 Agent（Node.js + ADK TS）
+│   ├── src/
+│   │   ├── server.ts                  # ADK toA2a() 启动 A2A 服务
+│   │   ├── frontend_agent.ts          # 自定义 BaseAgent：解析需求、生成、验证、返回 artifact
+│   │   ├── generator.ts               # 调用 OpenAI 兼容 API 生成工程文件
+│   │   ├── builder.ts                 # npm install / build / dev server 验证
+│   │   └── packer.ts                  # 打包工程为 tar.gz
+│   ├── Dockerfile
+│   ├── package.json
+│   ├── tsconfig.json
+│   └── README.md
+├── docker-compose.yml                 # 一键起前端子 Agent
+└── README.md                          # 整体运行说明</code></pre>
+    </div>
+
+    <div class="section">
+      <h2>3. 组件设计</h2>
+
+      <h3>3.1 主 Agent（main_agent/agent.py）</h3>
+      <ul>
+        <li>定义一个 <code>LlmAgent</code> 作为 root agent。</li>
+        <li>通过 <code>RemoteA2aAgent</code> 把前端子 Agent 注册为 sub_agent：</li>
+      </ul>
+      <pre><code>from google.adk.agents.remote_a2a_agent import RemoteA2aAgent, AGENT_CARD_WELL_KNOWN_PATH
+
+frontend_agent = RemoteA2aAgent(
+    name="frontend_agent",
+    description=(
+        "A specialist agent that builds runnable Vite + React frontend projects. "
+        "Give it a description of the UI and it returns a working project archive."
+    ),
+    agent_card="http://localhost:8001/.well-known/agent-card.json",
+    use_legacy=False,
+)
+
+root_agent = Agent(
+    model="gemini-2.5-flash",
+    name="main_agent",
+    instruction="""
+        You are a helpful assistant. When the user wants a frontend page or app,
+        delegate the task to 'frontend_agent'. Summarize its result back to the user.
+    """,
+    sub_agents=[frontend_agent],
+)</code></pre>
+
+      <h3>3.2 前端子 Agent（ADK TypeScript 自定义 BaseAgent）</h3>
+      <p>
+        前端子 Agent 不依赖 LLM 做路由，而是一个<b>确定性自定义 Agent</b>（继承 ADK TS 的 <code>BaseAgent</code>）。
+        ADK 的 <code>toA2a()</code> 会把它包装成标准的 A2A Server，自动处理 Agent Card 与 JSON-RPC 通信。
+      </p>
+      <p>暴露的端点由 <code>toA2a()</code> 自动生成：</p>
+      <table>
+        <tr><th>Path</th><th>说明</th></tr>
+        <tr><td><code>/.well-known/agent-card.json</code></td><td>Agent Card，供主 Agent 发现</td></tr>
+        <tr><td><code>/a2a</code>（JSON-RPC）</td><td>接收 Task，返回 Task 状态与 Artifact</td></tr>
+      </table>
+      <p>内部执行流程：</p>
+      <ol>
+        <li><b>解析需求：</b>从 <code>InvocationContext.userContent</code> 提取用户对前端的描述。</li>
+        <li><b>生成工程：</b>调用 OpenAI 兼容 API，生成 <code>package.json</code>、<code>vite.config.ts</code>、<code>index.html</code>、<code>src/App.tsx</code>、<code>src/main.tsx</code> 等。</li>
+        <li><b>写盘：</b>在容器内 <code>/workspace/projects/&lt;task-id&gt;/</code> 写入文件。</li>
+        <li><b>安装依赖：</b>执行 <code>npm install</code>。</li>
+        <li><b>构建验证：</b>执行 <code>npm run build</code>，确保无报错。</li>
+        <li><b>dev server 验证（必须）：</b>启动 <code>npm run dev</code>，请求 <code>/</code> 确认返回 200。</li>
+        <li><b>保存 Artifact：</b>通过 <code>FileArtifactService</code> 把 <code>project.tar.gz</code> 保存到 <code>/workspace/artifacts</code>。</li>
+        <li><b>返回结果：</b>yield 最终 Event，<code>actions.artifactDelta</code> 指向 <code>project.tar.gz</code>，文本说明构建结果。</li>
+      </ol>
+
+      <h3>3.3 主 Agent 的产物文件服务</h3>
+      <p>
+        Python 主 Agent 在收到前端子 Agent 返回的 artifact 后，会把它写入本地 <code>main_agent/artifacts/&lt;task-id&gt;/project.tar.gz</code>，
+        并启动一个 FastAPI 静态文件服务（挂载 <code>/artifacts</code> 路由）。
+        最终回复用户时，主 Agent 会给出下载链接，例如：
+      </p>
+      <pre><code>http://localhost:8080/artifacts/&lt;task-id&gt;/project.tar.gz</code></pre>
+
+      <h3>3.3 LLM 生成策略</h3>
+      <p>为了提升成功率，不一次性生成整个工程字符串，而是让 LLM 输出 JSON Schema，再映射到文件：</p>
+      <pre><code>{
+  "projectName": "todo-app",
+  "files": {
+    "package.json": "{...}",
+    "vite.config.ts": "import ...",
+    "src/App.tsx": "export default function App() {...}",
+    ...
+  }
+}</code></pre>
+      <p>也可以先让 LLM 输出文件清单，再逐个生成。具体策略可在实现中迭代。</p>
+    </div>
+
+    <div class="section">
+      <h2>4. 数据流</h2>
+      <div class="mermaid">
+sequenceDiagram
+    actor U as 用户
+    participant M as 主 Agent（Python ADK）
+    participant F as 前端子 Agent（ADK TS / Docker）
+    participant LLM as OpenAI 兼容 API
+    participant FS as /workspace
+    participant S as 主 Agent 文件服务
+
+    U->>M: "帮我做一个 TODO 列表前端页面"
+    M->>M: 识别意图，委派 frontend_agent
+    M->>F: A2A SendTask（用户需求）
+    F->>LLM: 生成 Vite+React 工程文件
+    LLM-->>F: 返回文件内容
+    F->>FS: 写入项目文件
+    F->>FS: npm install
+    F->>FS: npm run build
+    F->>FS: npm run dev & 请求 / 确认 200
+    F->>FS: 打包 project.tar.gz
+    F->>FS: FileArtifactService 保存 artifact
+    F-->>M: Task completed + artifactDelta
+    M->>M: 从 A2A Artifact 提取 tar.gz
+    M->>S: 保存到 main_agent/artifacts/<task-id>/
+    M-->>U: "已生成工程：http://localhost:8080/artifacts/<task-id>/project.tar.gz"
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>5. Docker 设计</h2>
+      <h3>5.1 前端子 Agent Dockerfile</h3>
+      <pre><code>FROM node:20-slim
+
+WORKDIR /app
+
+# 安装系统依赖（如需）
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# 复制并安装 Agent 自身依赖
+COPY package*.json ./
+RUN npm ci
+
+# 复制源码
+COPY . .
+RUN npm run build
+
+# 暴露 A2A 服务端口
+EXPOSE 8001
+
+CMD ["node", "dist/server.js"]</code></pre>
+
+      <h3>5.2 docker-compose.yml</h3>
+      <pre><code>services:
+  frontend_agent:
+    build: ./frontend_agent
+    ports:
+      - "8001:8001"
+    environment:
+      - PORT=8001
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL:-glm-4-flash}
+    volumes:
+      - frontend_workspace:/workspace
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/.well-known/agent-card.json"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  frontend_workspace:</code></pre>
+      <div class="callout">
+        <strong>说明：</strong>容器内需要能跑 <code>npm</code>，所以基础镜像用 <code>node:20-slim</code>。Agent 代码跑在 Node 上，生成工程时再用同一个 Node 环境执行 Vite/React 命令。
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>6. 环境变量与 API Key</h2>
+      <table>
+        <tr><th>变量</th><th>用途</th><th>是否必需</th></tr>
+        <tr><td><code>OPENAI_BASE_URL</code></td><td>前端子 Agent 调用的 OpenAI 兼容 API 地址</td><td><b>必需</b>（你指定为 <code>https://open.bigmodel.cn/api/coding/paas/v4</code>）</td></tr>
+        <tr><td><code>OPENAI_API_KEY</code></td><td>前端子 Agent 调用的 API Key</td><td><b>必需</b></td></tr>
+        <tr><td><code>OPENAI_MODEL</code></td><td>前端子 Agent 使用的模型名</td><td>默认 <code>glm-4-flash</code>，可配置</td></tr>
+        <tr><td><code>GOOGLE_API_KEY</code></td><td>主 Agent 调用 Gemini</td><td>主 Agent 默认用 Gemini，需设置</td></tr>
+        <tr><td><code>FRONTEND_AGENT_URL</code></td><td>主 Agent 读取前端 Agent Card 地址</td><td>本地默认 <code>http://localhost:8001</code></td></tr>
+        <tr><td><code>FILE_SERVER_PORT</code></td><td>主 Agent 产物文件服务端口</td><td>默认 <code>8080</code></td></tr>
+      </table>
+    </div>
+
+    <div class="section">
+      <h2>7. 开发步骤</h2>
+      <ol>
+        <li><b>搭建前端子 Agent：</b>初始化 Node 项目，安装 <code>@google/adk</code>、<code>openai</code>、TypeScript、Express。</li>
+        <li><b>实现自定义 BaseAgent：</b>继承 <code>BaseAgent</code>，在 <code>runAsyncImpl</code> 中解析用户需求、生成工程、构建验证、保存 artifact。</li>
+        <li><b>暴露 A2A 服务：</b>用 <code>toA2a(agent, { app, port: 8001, artifactService: new FileArtifactService('/workspace/artifacts') })</code> 启动服务。</li>
+        <li><b>实现工程生成逻辑：</b>调用 OpenAI 兼容 API 生成 Vite+React 文件，写盘，执行 <code>npm install</code> / <code>npm run build</code> / <code>npm run dev</code> 验证。</li>
+        <li><b>实现 artifact 返回：</b>打包为 <code>project.tar.gz</code>，通过 <code>FileArtifactService</code> 保存，并 yield 带 <code>artifactDelta</code> 的最终 Event。</li>
+        <li><b>编写 Dockerfile &amp; docker-compose：</b>确保 <code>docker compose up</code> 能拉起前端 Agent。</li>
+        <li><b>搭建主 Agent：</b>Python ADK 项目，配置 <code>RemoteA2aAgent</code> 指向 <code>http://localhost:8001</code>。</li>
+        <li><b>实现产物文件服务：</b>FastAPI 服务挂载 <code>/artifacts</code>，把从 A2A 收到的 artifact 保存并提供下载。</li>
+        <li><b>端到端验证：</b><code>docker compose up</code> 启动前端 Agent，<code>python main_agent/file_server.py</code> 启动文件服务，<code>adk web</code> 启动主 Agent，输入“帮我做一个 TODO 页面”，观察是否成功返回下载链接。</li>
+      </ol>
+    </div>
+
+    <div class="section">
+      <h2>8. 验收标准</h2>
+      <ul>
+        <li>用户通过主 Agent 发送自然语言需求，主 Agent 成功将任务派发给前端子 Agent。</li>
+        <li>前端子 Agent 在 Docker 容器内生成一个可 <code>npm run build</code> 通过的 Vite+React 工程。</li>
+        <li>主 Agent 能拿到工程产物（artifact / 下载链接 / 路径），并向用户反馈结果。</li>
+        <li>整个链路可重复运行，且只需要 <code>docker compose up</code> + <code>adk web</code> 即可启动。</li>
+      </ul>
+    </div>
+
+    <div class="section">
+      <h2>9. 进入实施前还需确认的问题</h2>
+      <ol>
+        <li><b>OpenAI 模型名：</b>你指定的 endpoint 支持哪个模型？例如 <code>glm-4-flash</code>、<code>glm-4-air</code>、<code>glm-4-plus</code>？</li>
+        <li><b>API Key：</b>请提供 <code>OPENAI_API_KEY</code>（或确认已设置到环境变量），否则代码无法实际调用。</li>
+        <li><b>主 Agent 的 LLM：</b>主 Agent 默认用 Gemini（需 <code>GOOGLE_API_KEY</code>）。如果你只有 OpenAI 兼容 API 的 key，我可以把主 Agent 也改成通过 LiteLLM 调用同一个 endpoint。</li>
+        <li><b>产物保留策略：</b>生成的 <code>tar.gz</code> 是长期保留在 <code>main_agent/artifacts/</code>，还是每次启动清理旧产物？</li>
+      </ol>
+    </div>
+
+    <footer>
+      本计划确认后，将按步骤实施 Phase 0 PoC。<br>
+      文件位置：<code>/Users/lijialun/work/adk_swarm/implementation_plan.html</code>
+    </footer>
+  </div>
+</body>
+</html>

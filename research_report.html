@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>多智能体协作平台 · ADK 技术调研与实现计划</title>
+  <script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({ startOnLoad: true, theme: 'default' });
+  </script>
+  <style>
+    :root {
+      --bg: #f7f9fc; --card: #ffffff; --text: #1f2937; --muted: #6b7280;
+      --primary: #2563eb; --primary-soft: #dbeafe; --border: #e5e7eb;
+      --ok: #10b981; --warn: #f59e0b; --bad: #ef4444;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: var(--bg); color: var(--text); line-height: 1.75;
+    }
+    .container { max-width: 1080px; margin: 0 auto; padding: 40px 24px; }
+    header { text-align: center; margin-bottom: 48px; }
+    h1 { font-size: 2.1rem; margin: 0 0 12px; }
+    .subtitle { color: var(--muted); font-size: 1.05rem; }
+    .badge { display: inline-block; background: var(--primary-soft); color: var(--primary); padding: 4px 12px; border-radius: 999px; font-size: 0.85rem; font-weight: 600; margin-top: 12px; }
+
+    .section { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 28px; margin-bottom: 24px; }
+    h2 { font-size: 1.45rem; margin: 0 0 18px; color: var(--primary); border-bottom: 2px solid var(--primary-soft); padding-bottom: 8px; }
+    h3 { font-size: 1.2rem; margin: 26px 0 12px; color: #1e40af; }
+    h4 { font-size: 1.05rem; margin: 18px 0 8px; color: #334155; }
+    p { margin: 10px 0; }
+    ul, ol { padding-left: 22px; }
+    li { margin: 8px 0; }
+    code { background: #f3f4f6; padding: 2px 6px; border-radius: 4px; font-family: "SFMono-Regular", Consolas, monospace; font-size: 0.9em; }
+    pre { background: #0f172a; color: #e2e8f0; padding: 16px; border-radius: 10px; overflow-x: auto; font-size: 0.9rem; }
+
+    .fit { color: var(--ok); font-weight: 600; }
+    .gap { color: var(--warn); font-weight: 600; }
+    .block { color: var(--bad); font-weight: 600; }
+    table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 0.95rem; }
+    th, td { text-align: left; padding: 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    th { background: #f8fafc; font-weight: 600; }
+    tr:hover { background: #f8fafc; }
+
+    .callout { background: #eff6ff; border-left: 4px solid var(--primary); padding: 14px 18px; border-radius: 0 10px 10px 0; margin: 16px 0; }
+    .callout.warn { background: #fffbeb; border-left-color: var(--warn); }
+    .callout.danger { background: #fef2f2; border-left-color: var(--bad); }
+
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 18px; margin-top: 14px; }
+    .card { background: #f8fafc; border: 1px solid var(--border); border-radius: 12px; padding: 18px; }
+    .card strong { color: var(--primary); }
+
+    .timeline { position: relative; padding-left: 28px; }
+    .timeline::before { content: ''; position: absolute; left: 8px; top: 6px; bottom: 6px; width: 2px; background: var(--border); }
+    .phase { position: relative; margin-bottom: 24px; }
+    .phase::before { content: ''; position: absolute; left: -24px; top: 6px; width: 12px; height: 12px; background: var(--primary); border-radius: 50%; border: 2px solid var(--card); }
+    .phase h4 { margin: 0 0 8px; color: var(--primary); }
+    .tag { font-size: 0.78rem; color: var(--muted); background: #f3f4f6; padding: 2px 8px; border-radius: 4px; margin-right: 6px; }
+
+    .mermaid { background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin: 16px 0; text-align: center; }
+
+    footer { text-align: center; color: var(--muted); font-size: 0.9rem; margin-top: 48px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Google ADK / A2A 技术调研报告与实现计划</h1>
+      <div class="subtitle">评估 ADK 对“主 Agent + 多专业子 Agent”分布式协作平台的支撑度，并给出落地路线图</div>
+      <div class="badge">版本 1.0 · 2026-06-16</div>
+    </header>
+
+    <div class="section">
+      <h2>0. 执行摘要</h2>
+      <p>
+        经过对 <a href="https://adk.dev" target="_blank">Google Agent Development Kit (ADK)</a>、
+        <a href="https://a2a-protocol.org" target="_blank">Agent2Agent (A2A) 协议</a> 及相关生态的调研，结论如下：
+      </p>
+      <ul>
+        <li><span class="fit">高度适配：</span>ADK 原生支持多工具调用、Skills、流式输出、Session/State/Memory、上下文压缩、多 Agent 编排与 A2A 通信，能够作为整个系统的核心 Agent 构建框架。</li>
+        <li><span class="gap">需要自研补充：</span>ADK 本身不提供“Agent 间通信记录平台”、“集中式 Agent 注册中心”、“强制运行时隔离”和“企业级跨 Agent 鉴权”。这些能力需要在 ADK 之上构建一层<strong>平台层（Platform Layer）</strong>。</li>
+        <li><span class="fit">推荐路线：</span>采用 <strong>ADK + A2A + 自研 Platform Gateway</strong> 的混合架构：ADK 负责实现每个 Agent 的内在能力；A2A 负责跨进程/跨组织的 Agent 通信标准；自研平台负责注册发现、消息转发、审计日志、鉴权、人机协同与部署编排。</li>
+      </ul>
+    </div>
+
+    <div class="section">
+      <h2>1. ADK 核心能力对照用户需求</h2>
+      <table>
+        <tr><th>用户需求</th><th>ADK 原生能力</th><th>适配度</th><th>备注</th></tr>
+        <tr><td>每个 Agent 拥有多种工具</td><td><code>FunctionTool</code> / <code>LongRunningFunctionTool</code> / <code>AgentTool</code>；支持并行调用</td><td class="fit">高</td><td>工具可以是 Python 函数、MCP Server、其他 Agent 的封装</td></tr>
+        <tr><td>Skills 体系</td><td><code>SkillToolset</code> + <code>SKILL.md</code>（L1 元数据 / L2 指令 / L3 资源）</td><td class="fit">高</td><td>支持按目录加载，实现上下文按需加载</td></tr>
+        <tr><td>独立上下文 / 记忆</td><td><code>Session</code> + <code>State</code> + <code>Memory Service</code>（InMemory / Database / Vertex AI Memory Bank）</td><td class="fit">高</td><td>子 Agent 可通过独立 Session 实现上下文隔离</td></tr>
+        <tr><td>上下文自压缩</td><td><code>EventsCompactionConfig</code> + <code>LlmEventSummarizer</code>（实验性）</td><td class="gap">中</td><td>功能存在但标注实验性，复杂 Workflow 建议自定义 Summary 策略</td></tr>
+        <tr><td>流式输出</td><td><code>Runner.run_live()</code> + <code>LiveRequestQueue</code>；BIDI / SSE 两种模式</td><td class="fit">高</td><td>BIDI 支持音频/视频实时交互；SSE 适合文本服务化场景</td></tr>
+        <tr><td>Agent 间通信</td><td><code>RemoteA2aAgent</code> / <code>to_a2a()</code> / A2A Agent Card</td><td class="gap">中高</td><td>协议与 SDK 成熟，但 ADK 的 A2A 集成目前仍为 Experimental</td></tr>
+        <tr><td>并发 / 链式编排</td><td><code>SequentialAgent</code> / <code>ParallelAgent</code> / <code>LoopAgent</code> / 自定义 Graph Workflow</td><td class="fit">高</td><td>可通过共享 State 实现 Fan-out / Gather</td></tr>
+        <tr><td>Human-in-the-loop</td><td><code>LongRunningFunctionTool</code> / 自定义 approval tool / Callbacks</td><td class="gap">中</td><td>无内置“Human Agent”，需要自定义 UI/消息队列集成</td></tr>
+        <tr><td>独立运行环境（容器/Pod）</td><td>支持容器化，可部署到 Cloud Run / GKE / Agent Engine / 自定义 K8s</td><td class="gap">中</td><td>ADK 提供运行时代码，但 Pod 调度、服务发现、网络隔离需平台层负责</td></tr>
+        <tr><td>Agent 通信记录</td><td>Runner 可输出 Event 日志；A2A 协议本身不含审计层</td><td class="gap">中</td><td>在主 Agent 侧记录 Task 级元数据即可；如需全量消息审计再扩展 Gateway</td></tr>
+      </table>
+    </div>
+
+    <div class="section">
+      <h2>2. 关键模块深度调研</h2>
+
+      <h3>2.1 Agent 与工具模型</h3>
+      <p>ADK 中的 <code>Agent</code>（或 <code>LlmAgent</code>）由三大件组成：</p>
+      <ul>
+        <li><strong>Model：</strong>默认 Gemini，也可通过 <code>LiteLlm</code> 接入 GPT/Claude/开源模型。</li>
+        <li><strong>Instruction：</strong>系统提示，决定 Agent 的行为与边界。</li>
+        <li><strong>Tools：</strong>可被 LLM 调用的能力单元。</li>
+      </ul>
+      <div class="callout">
+        <strong>关键设计：</strong>当主 Agent 配置 <code>sub_agents=[...]</code> 时，ADK 会自动把子 Agent 的 <code>description</code> 暴露给主 Agent，主 Agent 可自主决策把用户请求 <code>transfer_to_agent</code> 给某个子 Agent。
+      </div>
+
+      <h3>2.2 Skills 体系</h3>
+      <p>ADK Skills 是“可热插拔的能力包”，推荐目录结构如下：</p>
+      <pre><code>skills/
+  example-skill/
+    SKILL.md          # 必需：frontmatter + instructions
+    references/       # 补充文档
+    assets/           # 模板、数据、图片
+    scripts/          # 可执行脚本</code></pre>
+      <p>通过 <code>load_skill_from_dir()</code> 加载后，再用 <code>SkillToolset</code> 注入 Agent。这种“按需加载”机制正好符合用户对“上下文压缩、技能可插拔”的诉求。</p>
+
+      <h3>2.3 流式输出</h3>
+      <p>ADK 提供两种流式模式：</p>
+      <ul>
+        <li><strong>SSE（Server-Sent Events）：</strong>基于标准 Gemini API，适合文本流式返回。</li>
+        <li><strong>BIDI（Bidirectional Streaming）：</strong>基于 Gemini Live API / WebSocket，支持文本、音频、视频实时输入输出。</li>
+      </ul>
+      <p>核心抽象是 <code>LiveRequestQueue</code>（上行）和 <code>Runner.run_live()</code>（下行），可轻松包装成 FastAPI WebSocket 服务。</p>
+
+      <h3>2.4 Session、State、Memory 与上下文压缩</h3>
+      <ul>
+        <li><strong>Session：</strong>一次对话线程；由 <code>SessionService</code> 管理，支持内存、数据库、Vertex AI 三种实现。</li>
+        <li><strong>State：</strong>每个 Session 内的键值对“草稿本”，通过 <code>output_key</code>、工具、回调更新。</li>
+        <li><strong>Memory：</strong>跨 Session 的长期记忆，可用 <code>InMemoryMemoryService</code> 或 <code>VertexAiMemoryBankService</code>。</li>
+        <li><strong>Context Compaction：</strong>通过 <code>EventsCompactionConfig</code> 自动对历史事件做 LLM Summary，非阻塞执行。</li>
+      </ul>
+      <div class="callout warn">
+        <strong>注意：</strong>上下文压缩目前为实验性功能，且对 <code>SequentialAgent</code> 等 Workflow Agent 需要显式指定 summarizer。生产环境建议先以自定义压缩策略兜底。
+      </div>
+
+      <h3>2.5 多 Agent 编排与 Workflow</h3>
+      <p>ADK 把“多 Agent”视为 Workflow，主要编排原语：</p>
+      <table>
+        <tr><th>原语</th><th>用途</th></tr>
+        <tr><td><code>Agent</code> / <code>LlmAgent</code></td><td>具备 LLM 推理能力的节点</td></tr>
+        <tr><td><code>SequentialAgent</code></td><td>顺序执行多个子 Agent</td></tr>
+        <tr><td><code>ParallelAgent</code></td><td>并发执行多个子 Agent，常用于 Fan-out</td></tr>
+        <tr><td><code>LoopAgent</code></td><td>循环执行直到满足终止条件</td></tr>
+        <tr><td><code>CustomAgent</code>（继承 BaseAgent）</td><td>用确定性代码控制流程</td></tr>
+      </table>
+      <p>Workflow 之间的通信主要依靠<strong>共享 Session State</strong>：上游 Agent 把结果写入 <code>state['xxx']</code>，下游 Agent 通过模板 <code>{{xxx}}</code> 读取。</p>
+
+      <h3>2.6 A2A：Agent-to-Agent 协议</h3>
+      <p>A2A 是 Google 主导的开放协议（已捐献给 Linux Foundation），目标让不同框架、不同组织实现的 Agent 能互相协作。核心概念：</p>
+      <ul>
+        <li><strong>Agent Card：</strong>Agent 的“名片”，描述名称、URL、能力、Skills、输入输出模式、认证方式，通常位于 <code>/.well-known/agent-card.json</code>。</li>
+        <li><strong>Task：</strong>一次 Agent 间任务，具有生命周期（submitted → working → input-required → completed / failed）。</li>
+        <li><strong>Message / Artifact：</strong>任务中的消息与产物。</li>
+        <li><strong>传输方式：</strong>JSON-RPC over HTTP；支持 Polling、Streaming（SSE/WebSocket）、Push Notification（WebHook）。</li>
+      </ul>
+      <p>ADK 中暴露远程 Agent 使用 <code>to_a2a(agent, port=...)</code>；消费远程 Agent 使用 <code>RemoteA2aAgent(agent_card=...)</code>。这样外部专家实现的 Agent 只要提供标准 Agent Card，就能被主 Agent 发现并调用。</p>
+
+      <h3>2.7 部署与运行时隔离</h3>
+      <p>ADK 官方支持多种部署方式：</p>
+      <ul>
+        <li><strong>本地开发：</strong><code>adk run</code> / <code>adk web</code> / <code>adk api_server</code>。</li>
+        <li><strong>容器化：</strong>自定义 Dockerfile，可运行在任何支持容器的平台。</li>
+        <li><strong>Google Cloud：</strong>Cloud Run、GKE、Vertex AI Agent Engine / Agent Runtime。</li>
+        <li><strong>第三方平台：</strong>LangSmith Agent Server 等。</li>
+      </ul>
+      <div class="callout">
+        <strong>与“每个 Agent 一个 Pod”诉求的匹配：</strong>ADK 本身不限制进程边界。我们可以把每个 Agent 单独打包镜像，通过 Kubernetes Deployment 独立运行，再用 A2A / Service Mesh 连接。平台层负责 Pod 生命周期与发现。
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>3. 推荐架构</h2>
+      <div class="mermaid">
+flowchart TB
+    subgraph User["用户层"]
+      U[用户]
+      UI[Web / APP / API]
+    end
+
+    subgraph Platform["平台层（自研）"]
+      GW[A2A Gateway / 消息代理]
+      REG[Agent Registry / Discovery]
+      AUDIT[审计日志 / Trace]
+      AUTH[身份鉴权 / mTLS]
+      HITL[人工审批中心]
+    end
+
+    subgraph Main["主 Agent（ADK）"]
+      MA[Orchestrator Agent]
+      SK[Skills / Tools]
+    end
+
+    subgraph Agents["专业子 Agent（ADK / 外部）"]
+      A1[Agent A - 法律]
+      A2[Agent B - 财务]
+      A3[Agent C - 技术]
+      A4[外部 Agent - 第三方专家]
+    end
+
+    U --> UI
+    UI --> MA
+    MA --> SK
+    MA -->|A2A via GW| A1
+    MA -->|A2A via GW| A2
+    MA -->|A2A via GW| A3
+    MA -->|A2A via GW| A4
+    GW --> REG
+    GW --> AUDIT
+    GW --> AUTH
+    GW --> HITL
+      </div>
+
+      <h3>3.1 各层职责</h3>
+      <div class="grid">
+        <div class="card">
+          <strong>主 Agent 层（ADK）</strong>
+          <p>用户交互门面；理解意图；规划任务；决定调用哪些子 Agent；汇总结果；维护用户级 Session。</p>
+        </div>
+        <div class="card">
+          <strong>专业 Agent 层（ADK / 外部）</strong>
+          <p>每个 Agent 独立进程/Pod；拥有独立 Skills、Tools、State；通过 A2A 对外暴露能力。</p>
+        </div>
+        <div class="card">
+          <strong>平台 Gateway 层（自研）</strong>
+          <p>转发 A2A 请求；记录通信日志；统一鉴权；处理流式/异步消息；人机审批状态机。</p>
+        </div>
+        <div class="card">
+          <strong>注册与发现层（自研）</strong>
+          <p>维护 Agent Card 目录；支持按 Skill 搜索；健康检查；版本管理；权重路由。</p>
+        </div>
+      </div>
+
+      <h3>3.2 为什么必须有自研平台层？</h3>
+      <ul>
+        <li><strong>记录通信：</strong>A2A 协议本身不强制日志持久化；自研 Gateway 可以在流量入口落盘所有 Task/Message。</li>
+        <li><strong>统一发现：</strong>外部 Agent 的 Agent Card URL 可能分散在不同域名，需要注册中心聚合。</li>
+        <li><strong>安全边界：</strong>跨组织 Agent 通信需要身份校验、最小权限、TLS/mTLS、审计。</li>
+        <li><strong>人机协同：</strong>任务暂停、通知用户、接收人工输入，这些状态机不适合放在 ADK 内部。</li>
+        <li><strong>运行时编排：</strong>容器/Pod 的创建、销毁、扩缩容、网络策略属于平台层职责。</li>
+      </ul>
+    </div>
+
+    <div class="section">
+      <h2>4. 详细实现计划</h2>
+      <div class="callout">
+        <strong>总周期估算：</strong>约 8～10 周（4 人小团队全职），采用“先跑通本地链路，再上平台与隔离”的渐进式策略。
+      </div>
+
+      <div class="timeline">
+        <div class="phase">
+          <h4>Phase 0：本地 PoC（第 1～2 周）</h4>
+          <p><span class="tag">目标</span>验证 ADK 多 Agent + A2A 链路可行。</p>
+          <ul>
+            <li>搭建 Python 项目骨架，安装 <code>google-adk[a2a]</code>。</li>
+            <li>实现一个“主 Agent” + 两个“子 Agent”（一个本地 sub-agent，一个通过 <code>to_a2a()</code> 暴露的远程 Agent）。</li>
+            <li>使用 <code>adk web</code> 进行交互验证；跑通“用户提问 → 主 Agent 委派 → 远程 Agent 返回 → 主 Agent 汇总”的闭环。</li>
+            <li>输出：可运行的 PoC 代码、问题清单、性能基线。</li>
+          </ul>
+        </div>
+
+        <div class="phase">
+          <h4>Phase 1：平台骨架（第 2～4 周）</h4>
+          <p><span class="tag">目标</span>建立 Agent 注册、发现、A2A 代理与审计能力。</p>
+          <ul>
+            <li><strong>Agent Registry：</strong>基于数据库（PostgreSQL）或 KV（Redis）实现 Agent Card 存储；提供 REST/GraphQL 查询接口。</li>
+            <li><strong>A2A Gateway：</strong>FastAPI/Go 实现的透明代理，拦截 <code>/.well-known/agent-card.json</code> 与 <code>/a2a/*</code> 流量，落盘 Message/Task。</li>
+            <li><strong>主 Agent 接入注册中心：</strong>主 Agent 启动时拉取 Agent Card 列表，动态生成 <code>RemoteA2aAgent</code> 集合作为 <code>sub_agents</code>。</li>
+            <li><strong>审计查询 UI：</strong>简单的 Web 页面查看 Agent 间通信流水。</li>
+          </ul>
+        </div>
+
+        <div class="phase">
+          <h4>Phase 2：运行时隔离与部署（第 4～6 周）</h4>
+          <p><span class="tag">目标</span>让每个 Agent 可独立容器化、独立部署。</p>
+          <ul>
+            <li>为每个 Agent 编写 Dockerfile，打包成独立镜像。</li>
+            <li>编写 Kubernetes manifests（Deployment + Service），每个 Agent 一个 Pod。</li>
+            <li>实现基于 K8s Service / Ingress 的 Agent Card 发现，或让平台层主动注册 Pod 地址。</li>
+            <li>主 Agent 运行在独立命名空间/集群，通过平台 Gateway 调用各子 Agent。</li>
+            <li>引入 readiness/liveness 探针、资源限制、HPA 自动扩缩容。</li>
+          </ul>
+        </div>
+
+        <div class="phase">
+          <h4>Phase 3：编排增强与人机协同（第 6～8 周）</h4>
+          <p><span class="tag">目标</span>支持复杂 Workflow 与人工审批。</p>
+          <ul>
+            <li><strong>规划优先模式：</strong>主 Agent 在委派前先输出执行计划（Plan-first），经用户确认或自动执行。</li>
+            <li><strong>Workflow 模板：</strong>将常见模式封装为 <code>SequentialAgent</code> / <code>ParallelAgent</code> / <code>LoopAgent</code> 模板（会诊、报告生成、迭代优化）。</li>
+            <li><strong>Human-in-the-loop：</strong>通过 <code>LongRunningFunctionTool</code> 或平台 Gateway 的状态机暂停任务，等待人工输入后继续。</li>
+            <li><strong>上下文压缩：</strong>启用 <code>EventsCompactionConfig</code>，并自定义 Summary 策略，防止长会话爆上下文。</li>
+          </ul>
+        </div>
+
+        <div class="phase">
+          <h4>Phase 4：安全、观测与生产化（第 8～10 周）</h4>
+          <p><span class="tag">目标</span>让系统可稳定运行并持续评估。</p>
+          <ul>
+            <li><strong>安全：</strong>Gateway 层统一 OAuth2/mTLS；Agent Card 声明所需认证方式；敏感数据脱敏。</li>
+            <li><strong>观测：</strong>OpenTelemetry 链路追踪、结构化日志、Prometheus 指标、Langfuse/Phoenix 等 LLM 观测平台对接。</li>
+            <li><strong>评估：</strong>建立 Agent 评估数据集，用 ADK Eval 或自定义指标评估主 Agent 路由准确率、子 Agent 完成质量。</li>
+            <li><strong>CI/CD：</strong>每个 Agent 独立仓库/流水线，容器镜像自动构建、版本化、灰度发布。</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>5. 风险与应对</h2>
+      <table>
+        <tr><th>风险</th><th>影响</th><th>应对策略</th></tr>
+        <tr>
+          <td>ADK A2A 集成仍处 Experimental</td>
+          <td>API 可能变动，存在兼容性问题</td>
+          <td>封装 A2A 调用层，隔离 ADK 具体实现；关注官方 release note；必要时直接基于 <code>a2a-sdk</code> 实现</td>
+        </tr>
+        <tr>
+          <td>上下文压缩效果不稳定</td>
+          <td>长链路丢失关键信息</td>
+          <td>自定义压缩策略；保留用户原始请求、系统提示、工具链等关键消息；人工评估压缩质量</td>
+        </tr>
+        <tr>
+          <td>Agent 间通信延迟高</td>
+          <td>用户体验下降</td>
+          <td>本地 Agent 走进程内调用；远程 Agent 走 A2A；使用流式响应减少等待感；对慢 Agent 设置超时/异步</td>
+        </tr>
+        <tr>
+          <td>外部 Agent 不可控</td>
+          <td>输出质量、安全、稳定性不可控</td>
+          <td>严格 Agent Card 审核；输出校验与沙箱；超时重试；用户显式授权调用外部 Agent</td>
+        </tr>
+        <tr>
+          <td>平台层成为单点故障</td>
+          <td>Gateway 故障导致全系统不可用</td>
+          <td>Gateway 多副本部署；注册中心高可用；主 Agent 对本地关键能力做短路降级</td>
+        </tr>
+      </table>
+    </div>
+
+    <div class="section">
+      <h2>6. 已确认的关键决策</h2>
+      <p>经与用户确认，以下决策将指导后续实现：</p>
+      <ol>
+        <li><strong>通信记录范围：</strong>不记录 Agent 间完整 Message 正文；仅在主 Agent 侧记录 Task 级元数据（调用对象、状态、返回摘要），降低存储与合规成本。</li>
+        <li><strong>隔离级别：</strong>不同 Agent 运行在不同 Container 中，通过 HTTP/A2A 通信；独立 Pod 与否保持灵活，本地调试和部署以独立 Container 为主。</li>
+        <li><strong>外部接入标准：</strong>强制使用 A2A 协议，保证开放性与生态兼容性。</li>
+        <li><strong>主 Agent 自主性：</strong>模型自主决策为主，预定义 Workflow 模板为辅的混合模式。</li>
+      </ol>
+      <div class="callout">
+        基于上述决策，平台层无需建设“全量 Agent 间消息审计”系统，重点转向 Agent 注册发现、A2A 路由转发、鉴权与观测。如后续合规要求变化，可在 Gateway 层扩展日志能力。
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>7. 参考资源</h2>
+      <ol>
+        <li><a href="https://adk.dev" target="_blank">Google ADK 官方文档</a></li>
+        <li><a href="https://adk.dev/tutorials/" target="_blank">ADK Tutorials（Multi-tool / Agent Team / Streaming）</a></li>
+        <li><a href="https://adk.dev/a2a/quickstart-exposing/" target="_blank">ADK A2A Quickstart：Exposing</a></li>
+        <li><a href="https://adk.dev/a2a/quickstart-consuming/" target="_blank">ADK A2A Quickstart：Consuming</a></li>
+        <li><a href="https://a2a-protocol.org/latest/" target="_blank">A2A Protocol 官方文档</a></li>
+        <li><a href="https://github.com/a2aproject/A2A" target="_blank">A2A GitHub 仓库</a></li>
+        <li><a href="https://adk.dev/deploy/" target="_blank">ADK 部署指南（Cloud Run / GKE / Agent Engine）</a></li>
+        <li><a href="https://adk.dev/sessions/state/" target="_blank">ADK Session State 文档</a></li>
+        <li><a href="https://adk.dev/skills/" target="_blank">ADK Skills 文档</a></li>
+        <li><a href="https://adk.dev/workflows/patterns/" target="_blank">ADK Workflow Patterns</a></li>
+      </ol>
+    </div>
+
+    <footer>
+      本报告与实现计划基于截至 2026-06-16 的公开文档与社区资料整理。<br>
+      关键决策已确认，下一步可直接启动 Phase 0 PoC 开发。
+    </footer>
+  </div>
+</body>
+</html>

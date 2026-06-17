@@ -1,0 +1,10 @@
+google-adk[a2a]
+google-adk[db]
+google-adk[mcp]
+litellm
+fastapi
+uvicorn[standard]
+python-dotenv
+requests
+aiosqlite
+greenlet

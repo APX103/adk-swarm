@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>多智能体协作平台 · 需求总结</title>
+  <style>
+    :root {
+      --bg: #f7f9fc;
+      --card: #ffffff;
+      --text: #1f2937;
+      --muted: #6b7280;
+      --primary: #2563eb;
+      --primary-soft: #dbeafe;
+      --border: #e5e7eb;
+      --accent: #0ea5e9;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: var(--bg); color: var(--text);
+      line-height: 1.7;
+    }
+    .container { max-width: 980px; margin: 0 auto; padding: 40px 24px; }
+    header { text-align: center; margin-bottom: 48px; }
+    h1 { font-size: 2.2rem; margin: 0 0 12px; letter-spacing: -0.02em; }
+    .subtitle { color: var(--muted); font-size: 1.05rem; }
+    .badge {
+      display: inline-block; background: var(--primary-soft); color: var(--primary);
+      padding: 4px 12px; border-radius: 999px; font-size: 0.85rem; font-weight: 600;
+      margin-top: 12px;
+    }
+    .section { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 28px; margin-bottom: 24px; }
+    h2 { font-size: 1.4rem; margin: 0 0 18px; color: var(--primary); }
+    h3 { font-size: 1.15rem; margin: 22px 0 10px; }
+    ul { padding-left: 20px; }
+    li { margin: 8px 0; }
+    .highlight { background: #fff7ed; border-left: 4px solid #f59e0b; padding: 14px 18px; border-radius: 0 10px 10px 0; margin: 14px 0; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 18px; margin-top: 14px; }
+    .card { background: #f8fafc; border: 1px solid var(--border); border-radius: 12px; padding: 18px; }
+    .card strong { color: var(--primary); }
+    .tag { font-size: 0.8rem; color: var(--muted); background: #f3f4f6; padding: 2px 8px; border-radius: 4px; margin-right: 6px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    th, td { text-align: left; padding: 12px; border-bottom: 1px solid var(--border); }
+    th { background: #f8fafc; font-weight: 600; }
+    footer { text-align: center; color: var(--muted); font-size: 0.9rem; margin-top: 40px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>多智能体（Agent）协作平台需求总结</h1>
+      <div class="subtitle">基于 Google ADK / A2A 生态构建“主 Agent + 专业子 Agent”的分布式智能体系统</div>
+      <div class="badge">版本 1.0 · 2026-06-16</div>
+    </header>
+
+    <div class="section">
+      <h2>1. 愿景一句话</h2>
+      <p>
+        打造一个以<strong>主 Agent 为人机交互门面</strong>、以<strong>多个专业 Agent 为能力单元</strong>的协作平台：
+        主 Agent 能够理解用户意图，自主决定调用哪些子 Agent（本地或远程、并发或链式、单轮或多轮），
+        并在一个可记录、可观测、可扩展的平台上完成 Agent 之间的发现、通信与结果汇总。
+      </p>
+    </div>
+
+    <div class="section">
+      <h2>2. 核心角色定义</h2>
+      <div class="grid">
+        <div class="card">
+          <strong>主 Agent（Orchestrator / Facade）</strong>
+          <p>用户日常聊天的唯一入口。具备强大的通用能力、规划能力、总结能力，并了解所有可用子 Agent 的技能范围。</p>
+        </div>
+        <div class="card">
+          <strong>专业子 Agent（Specialist Agents）</strong>
+          <p>每个 Agent 拥有独立技能（Skills）、工具（Tools）与上下文。可由团队内部实现，也可由外部专家/第三方实现并接入。</p>
+        </div>
+        <div class="card">
+          <strong>平台层（Agent Interaction Platform）</strong>
+          <p>负责 Agent 注册与发现、Agent 间通信转发、消息/任务记录、审计、鉴权、观测与人机协同入口。</p>
+        </div>
+        <div class="card">
+          <strong>人（Human-in-the-loop）</strong>
+          <p>在关键决策、审批、异常、需要补充信息时介入；平台需提供可插拔的人工确认机制。</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>3. 功能性需求</h2>
+      <h3>3.1 主 Agent 必须具备的能力</h3>
+      <ul>
+        <li><strong>多工具调用：</strong>可同时调用多个工具并组合结果；支持并行 Function Calling。</li>
+        <li><strong>Skills 体系：</strong>按场景加载 Skill（SKILL.md），实现上下文按需加载与能力模块化。</li>
+        <li><strong>上下文自管理：</strong>基于 Session / State / Memory 维护多轮上下文，并支持上下文压缩（Compaction）。</li>
+        <li><strong>流式输出：</strong>支持文本、音频、视频等流式响应，提升交互体验。</li>
+        <li><strong>规划与编排：</strong>能根据任务复杂度选择“直接回答 / 调用单 Agent / 并发调用多 Agent / 链式调用 / 让 Agent 之间多轮协商”。</li>
+        <li><strong>结果汇总：</strong>对子 Agent 返回的结果进行去噪、综合、格式化后返回给用户。</li>
+      </ul>
+
+      <h3>3.2 子 Agent 必须具备的能力</h3>
+      <ul>
+        <li>拥有独立的 <strong>Skills + Tools</strong> 组合，聚焦一个或几个专业领域。</li>
+        <li>拥有独立的 <strong>上下文空间</strong>，不被主 Agent 的上下文污染。</li>
+        <li>可运行在独立的进程、容器或 Pod 中，实现运行环境隔离。</li>
+        <li>能够以标准协议对外暴露能力，供主 Agent 或其他 Agent 发现和调用。</li>
+      </ul>
+
+      <h3>3.3 平台层必须具备的能力</h3>
+      <ul>
+        <li><strong>Agent 注册与发现：</strong>维护 Agent Card / Skill 目录，让主 Agent 知道“谁能做什么”。</li>
+        <li><strong>通信中介：</strong>转发 Agent 间请求与响应；支持同步、流式、异步三种模式。</li>
+        <li><strong>消息记录与审计：</strong>可选地持久化 Agent 间通信内容，用于追溯、调试、合规。</li>
+        <li><strong>人机协同：</strong>在任务需要时暂停并通知人，接收人工输入后继续执行。</li>
+        <li><strong>鉴权与安全：</strong>Agent 间通信需身份校验、最小权限、加密传输。</li>
+        <li><strong>观测与评估：</strong>链路追踪、日志、指标、Agent 效果评估。</li>
+      </ul>
+    </div>
+
+    <div class="section">
+      <h2>4. 非功能性需求</h2>
+      <table>
+        <tr><th>维度</th><th>要求</th></tr>
+        <tr><td>稳定性</td><td>单 Agent 故障不应拖垮整个系统；具备超时、重试、降级机制。</td></tr>
+        <tr><td>扩展性</td><td>新 Agent 接入只需注册 Agent Card 并满足通信协议，无需改动主 Agent 代码。</td></tr>
+        <tr><td>隔离性</td><td>子 Agent 可独立部署、独立伸缩、独立更新；不同 Agent 的依赖/环境互不干扰。</td></tr>
+        <tr><td>多模型</td><td>不同 Agent 可选用不同模型（Gemini / GPT / Claude / 开源模型等）。</td></tr>
+        <tr><td>低延迟</td><td>本地调用优先走内存/进程内；远程调用通过 A2A / gRPC / HTTP 减少开销。</td></tr>
+        <tr><td>可解释性</td><td>每次决策应可追溯：为什么选这个 Agent、调用了什么、中间结果是什么。</td></tr>
+      </table>
+    </div>
+
+    <div class="section">
+      <h2>5. 关键使用场景</h2>
+      <div class="grid">
+        <div class="card">
+          <strong>场景 A：直接回答</strong><br>
+          <span class="tag">低复杂度</span>
+          <p>用户问通用问题，主 Agent 直接调用自身工具 / Skills 回答。</p>
+        </div>
+        <div class="card">
+          <strong>场景 B：单专业 Agent</strong><br>
+          <span class="tag">中等复杂度</span>
+          <p>主 Agent 识别到专业领域，调用对应远程 Agent 获取结果并汇总。</p>
+        </div>
+        <div class="card">
+          <strong>场景 C：并发专家会诊</strong><br>
+          <span class="tag">高复杂度</span>
+          <p>一个问题需要法律、财务、技术三个 Agent 同时输出意见，主 Agent 综合三方结论。</p>
+        </div>
+        <div class="card">
+          <strong>场景 D：链式工作流</strong><br>
+          <span class="tag">高复杂度</span>
+          <p>前一个 Agent 的输出作为后一个 Agent 的输入，按顺序完成数据提取 → 分析 → 生成报告。</p>
+        </div>
+        <div class="card">
+          <strong>场景 E：Agent 间自主协商</strong><br>
+          <span class="tag">高复杂度</span>
+          <p>多个 Agent 围绕同一任务多轮沟通，平台记录完整协商过程，最终由主 Agent 给出结论。</p>
+        </div>
+        <div class="card">
+          <strong>场景 F：人工审批</strong><br>
+          <span class="tag">合规场景</span>
+          <p>涉及金额、敏感操作或不确定结论时，暂停流程等待人工确认。</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>6. 已确认的关键决策</h2>
+      <div class="highlight">
+        <strong>说明：</strong>经与用户确认，以下决策将指导后续实现。
+      </div>
+      <ul>
+        <li><strong>通信记录：</strong>不记录 Agent 间完整 Message 正文；仅在主 Agent 侧记录“调用了谁、返回了什么结果”等 Task 级元数据，便于追溯与调试。</li>
+        <li><strong>运行时隔离：</strong>不同 Agent 运行在不同 Container 中，通过 HTTP/A2A 通信；是否部署到独立 Pod 保持灵活，初期以独立 Container 为主。</li>
+        <li><strong>外部接入协议：</strong>强制使用 A2A 协议，保证开放性与未来生态兼容性。</li>
+        <li><strong>编排策略：</strong>以模型自主决策为主，同时提供预定义 Workflow 模板作为补充（混合模式）。</li>
+      </ul>
+    </div>
+
+    <footer>
+      本文件为需求总结，详细技术调研与实现计划请见 <code>research_report.html</code>。
+    </footer>
+  </div>
+</body>
+</html>

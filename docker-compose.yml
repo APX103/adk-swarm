@@ -1,0 +1,22 @@
+services:
+  frontend_agent:
+    build: ./frontend_agent
+    ports:
+      - "8001:8001"
+    environment:
+      - PORT=8001
+      - HOST=0.0.0.0
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL:-glm-4.5-air}
+      - ARTIFACT_ROOT=/workspace/artifacts
+    volumes:
+      - frontend_workspace:/workspace
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/.well-known/agent-card.json"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  frontend_workspace:
