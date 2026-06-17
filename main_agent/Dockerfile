@@ -24,9 +24,12 @@ COPY main_agent/file_server.py ./main_agent/file_server.py
 COPY main_agent/session.py ./main_agent/session.py
 COPY main_agent/requirements.txt ./main_agent/requirements.txt
 COPY main_agent/__init__.py ./main_agent/__init__.py
-COPY main_agent/artifacts/ ./main_agent/artifacts/
+# main_agent/artifacts/ is a runtime output dir (gitignored), so we don't COPY it;
+# /app/artifacts is created below via `mkdir -p`.
 COPY main_agent/test_orchestration.py ./main_agent/test_orchestration.py
 COPY main_agent/test_subagent.py ./main_agent/test_subagent.py
+COPY main_agent/test_e2e.py ./main_agent/test_e2e.py
+COPY main_agent/test_run.py ./main_agent/test_run.py
 COPY main_agent/a2a_server.py ./main_agent/a2a_server.py
 COPY main_agent/entrypoint.sh ./main_agent/entrypoint.sh
 RUN chmod +x ./main_agent/entrypoint.sh

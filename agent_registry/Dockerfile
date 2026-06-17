@@ -12,6 +12,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY agent_registry/ .
 
-ENV REGISTRY_CONFIG_PATH=/app/endpoints.json
+RUN mkdir -p /app/data
+
+ENV REGISTRY_DB_URL=sqlite:////app/data/registry.db
+ENV REGISTRY_PROBE_INTERVAL=60
 
 CMD ["python", "server.py"]
