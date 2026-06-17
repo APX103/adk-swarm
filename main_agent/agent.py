@@ -53,6 +53,7 @@ FRONTEND_AGENT_URL = os.getenv("FRONTEND_AGENT_URL", "http://localhost:8001")
 BACKEND_AGENT_URL = os.getenv("BACKEND_AGENT_URL", "http://localhost:8002")
 COMEDIAN_AGENT_URL = os.getenv("COMEDIAN_AGENT_URL", "http://localhost:8003")
 CRITIC_AGENT_URL = os.getenv("CRITIC_AGENT_URL", "http://localhost:8004")
+EINO_AGENT_URL = os.getenv("EINO_AGENT_URL", "http://localhost:8005")
 FILE_SERVER_PORT = int(os.getenv("FILE_SERVER_PORT", "8080"))
 
 
@@ -220,6 +221,12 @@ def _build_delegate_tools() -> list:
             CRITIC_AGENT_URL,
             "一个笑话评论员子 Agent。给它一段笑话，它会给出简短评价（好不好笑、打分、理由）。"
             "当需要评价某个笑话时调用本工具委派给它。",
+        ),
+        (
+            "eino_agent",
+            EINO_AGENT_URL,
+            "基于 CloudWeGo Eino 框架的 Go Agent，能查询天气（get_weather 工具）。"
+            "遇到天气查询、气象信息相关需求时调用本工具委派给它。",
         ),
     ]
 

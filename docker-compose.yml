@@ -33,6 +33,8 @@ services:
       - BACKEND_AGENT_URL=http://mock_agent:8002
       - COMEDIAN_AGENT_URL=http://comedian:8003
       - CRITIC_AGENT_URL=http://critic:8004
+      - EINO_AGENT_URL=http://eino_agent:8005
+      - MCP_SERVERS=
       - FILE_SERVER_PORT=8080
       - SESSIONS_DB_PATH=/app/data/sessions.db
       - ADK_WEB=true
@@ -44,6 +46,8 @@ services:
       frontend_agent:
         condition: service_healthy
       mock_agent:
+        condition: service_healthy
+      eino_agent:
         condition: service_healthy
 
   mock_agent:
@@ -107,6 +111,23 @@ services:
     command: ["python", "critic_server.py"]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8004/.well-known/agent-card.json"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  eino_agent:
+    build: ./eino_agent
+    ports:
+      - "8005:8005"
+    environment:
+      - EINO_AGENT_HOST=0.0.0.0
+      - EINO_AGENT_PORT=8005
+      - SERVICE_NAME=eino_agent
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL:-glm-4.5-air}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8005/.well-known/agent-card.json"]
       interval: 10s
       timeout: 5s
       retries: 5

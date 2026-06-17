@@ -1,0 +1,896 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>adk_swarm 架构总览</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #0f172a;
+    color: #e2e8f0;
+    min-height: 100vh;
+    padding: 40px 20px;
+  }
+  h1 {
+    text-align: center;
+    font-size: 28px;
+    margin-bottom: 8px;
+    color: #f1f5f9;
+  }
+  .subtitle {
+    text-align: center;
+    color: #94a3b8;
+    margin-bottom: 40px;
+    font-size: 14px;
+  }
+  .section {
+    margin-bottom: 48px;
+  }
+  .section-title {
+    font-size: 18px;
+    font-weight: 600;
+    color: #7dd3fc;
+    margin-bottom: 16px;
+    padding-left: 12px;
+    border-left: 3px solid #7dd3fc;
+  }
+
+  /* Architecture Diagram */
+  .arch-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+  }
+  .layer {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    width: 100%;
+    padding: 8px 0;
+  }
+  .node {
+    border-radius: 12px;
+    padding: 16px 20px;
+    text-align: center;
+    min-width: 140px;
+    position: relative;
+  }
+  .node .name {
+    font-weight: 700;
+    font-size: 14px;
+    margin-bottom: 4px;
+  }
+  .node .desc {
+    font-size: 11px;
+    opacity: 0.8;
+    line-height: 1.4;
+  }
+  .node .port {
+    font-size: 10px;
+    opacity: 0.6;
+    margin-top: 4px;
+    font-family: monospace;
+  }
+
+  /* Node types */
+  .node-orchestrator {
+    background: linear-gradient(135deg, #1e40af, #3b82f6);
+    border: 2px solid #60a5fa;
+    min-width: 200px;
+    box-shadow: 0 0 30px rgba(59,130,246,0.3);
+  }
+  .node-subagent {
+    background: linear-gradient(135deg, #065f46, #10b981);
+    border: 1.5px solid #34d399;
+  }
+  .node-tool {
+    background: linear-gradient(135deg, #7c2d12, #f97316);
+    border: 1.5px solid #fb923c;
+  }
+  .node-frontend {
+    background: linear-gradient(135deg, #581c87, #a855f7);
+    border: 1.5px solid #c084fc;
+  }
+  .node-infra {
+    background: linear-gradient(135deg, #374151, #6b7280);
+    border: 1.5px solid #9ca3af;
+    font-size: 12px;
+  }
+  .node-protocol {
+    background: linear-gradient(135deg, #831843, #ec4899);
+    border: 1.5px solid #f472b6;
+    min-width: 100px;
+    font-size: 12px;
+  }
+
+  /* Connections */
+  .connector {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    height: 40px;
+    position: relative;
+  }
+  .connector::before {
+    content: '';
+    width: 2px;
+    height: 100%;
+    background: #475569;
+  }
+  .connector-label {
+    background: #0f172a;
+    padding: 2px 8px;
+    font-size: 10px;
+    color: #94a3b8;
+    position: absolute;
+    white-space: nowrap;
+  }
+
+  /* Horizontal connections */
+  .h-connector {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px 0;
+  }
+  .h-line {
+    height: 2px;
+    background: #475569;
+    flex: 1;
+    max-width: 80px;
+  }
+  .h-label {
+    font-size: 10px;
+    color: #64748b;
+    padding: 0 8px;
+  }
+
+  /* Flow arrows */
+  .arrow-down {
+    color: #60a5fa;
+    font-size: 18px;
+    line-height: 1;
+  }
+
+  /* Message Flow */
+  .flow-diagram {
+    background: #1e293b;
+    border-radius: 12px;
+    padding: 24px;
+    overflow-x: auto;
+  }
+  .flow-steps {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    min-width: 800px;
+  }
+  .flow-step {
+    background: #334155;
+    border-radius: 8px;
+    padding: 12px 16px;
+    text-align: center;
+    flex-shrink: 0;
+  }
+  .flow-step .step-num {
+    font-size: 10px;
+    color: #7dd3fc;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  .flow-step .step-content {
+    font-size: 13px;
+    font-weight: 600;
+    margin-top: 4px;
+  }
+  .flow-step .step-detail {
+    font-size: 10px;
+    color: #94a3b8;
+    margin-top: 2px;
+  }
+  .flow-arrow {
+    color: #475569;
+    font-size: 20px;
+    padding: 0 4px;
+    flex-shrink: 0;
+  }
+
+  /* Tech Stack */
+  .tech-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 12px;
+  }
+  .tech-card {
+    background: #1e293b;
+    border-radius: 10px;
+    padding: 16px;
+    border: 1px solid #334155;
+  }
+  .tech-card .tech-name {
+    font-weight: 600;
+    font-size: 14px;
+    color: #f1f5f9;
+    margin-bottom: 6px;
+  }
+  .tech-card .tech-desc {
+    font-size: 12px;
+    color: #94a3b8;
+    line-height: 1.5;
+  }
+  .tech-card .tech-tag {
+    display: inline-block;
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    margin-top: 8px;
+    font-weight: 500;
+  }
+  .tag-python { background: #1e3a5f; color: #60a5fa; }
+  .tag-node { background: #3b1f0e; color: #fbbf24; }
+  .tag-docker { background: #1e3a5f; color: #38bdf8; }
+  .tag-go { background: #0e4f3b; color: #34d399; }
+  .tag-protocol { background: #3b0f3b; color: #f472b6; }
+
+  /* Data Flow Detail */
+  .dataflow-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  .dataflow-table th {
+    background: #1e293b;
+    padding: 10px 16px;
+    text-align: left;
+    font-weight: 600;
+    color: #7dd3fc;
+    border-bottom: 2px solid #334155;
+  }
+  .dataflow-table td {
+    padding: 10px 16px;
+    border-bottom: 1px solid #1e293b;
+    color: #cbd5e1;
+  }
+  .dataflow-table tr:hover td {
+    background: #1a2332;
+  }
+  .dataflow-table code {
+    background: #0f172a;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+    color: #a5b4fc;
+  }
+
+  /* Integration section */
+  .integration-box {
+    background: #1e293b;
+    border-radius: 12px;
+    padding: 24px;
+    border: 1px solid #334155;
+  }
+  .integration-box h3 {
+    font-size: 16px;
+    color: #f1f5f9;
+    margin-bottom: 16px;
+  }
+  .comparison {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-top: 16px;
+  }
+  .comparison-col {
+    background: #0f172a;
+    border-radius: 8px;
+    padding: 16px;
+    border: 1px solid #334155;
+  }
+  .comparison-col h4 {
+    font-size: 14px;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .comparison-col ul {
+    list-style: none;
+    font-size: 12px;
+    line-height: 1.8;
+    color: #94a3b8;
+  }
+  .comparison-col ul li::before {
+    content: '→ ';
+    color: #7dd3fc;
+  }
+
+  @media (max-width: 768px) {
+    .comparison { grid-template-columns: 1fr; }
+    .node { min-width: 100px; padding: 10px 12px; }
+    .node .name { font-size: 12px; }
+  }
+</style>
+</head>
+<body>
+
+<h1>🐝 adk_swarm 架构总览</h1>
+<p class="subtitle">基于 Google ADK + A2A 的多语言 (Python / Go / Node.js) 多 Agent 协作平台</p>
+
+<!-- ===== 1. 整体架构 ===== -->
+<div class="section">
+  <div class="section-title">1. 整体架构</div>
+  <div class="arch-container">
+
+    <!-- Layer 0: User -->
+    <div class="layer">
+      <div class="node node-infra">
+        <div class="name">👤 用户</div>
+        <div class="desc">CLI 或 Web UI 输入</div>
+      </div>
+    </div>
+
+    <div class="connector">
+      <span class="connector-label">http://localhost:8080</span>
+    </div>
+
+    <!-- Layer 1: Main Agent (Orchestrator) -->
+    <div class="layer">
+      <div class="node node-orchestrator">
+        <div class="name">🎯 main_agent (Orchestrator)</div>
+        <div class="desc">Python ADK Agent<br>自主路由 + 工具调用<br>Session 持久化 / 上下文压缩</div>
+        <div class="port">:8080 (adk web / file server)</div>
+      </div>
+    </div>
+
+    <div class="connector">
+      <span class="connector-label">A2A JSON-RPC 2.0</span>
+    </div>
+
+    <!-- Layer 2: Sub-Agents -->
+    <div class="layer" style="gap: 8px;">
+      <div class="node node-frontend">
+        <div class="name">⚛️ frontend_agent</div>
+        <div class="desc">Node.js + ADK TypeScript<br>生成 Vite+React 项目<br>npm install → build → verify</div>
+        <div class="port">:8001 (Docker)</div>
+      </div>
+      <div class="node node-subagent">
+        <div class="name">🔧 backend_agent</div>
+        <div class="desc">Python ADK Mock Agent<br>生成 FastAPI 接口规格<br>CRUD + Auth 模板</div>
+        <div class="port">:8002 (Docker)</div>
+      </div>
+      <div class="node node-subagent" style="background: linear-gradient(135deg, #0e4f3b, #34d399); border-color: #6ee7b7;">
+        <div class="name">🌤️ eino_agent</div>
+        <div class="desc">Go + CloudWeGo Eino<br>天气查询 (get_weather 工具)<br>手动 A2A JSON-RPC 实现</div>
+        <div class="port">:8005 (Docker)</div>
+      </div>
+    </div>
+
+    <div class="layer" style="gap: 8px;">
+      <div class="node node-subagent">
+        <div class="name">🎤 comedian_agent</div>
+        <div class="desc">Python ADK Demo Agent<br>根据主题讲中文笑话<br>2-3 句</div>
+        <div class="port">:8003 (Docker)</div>
+      </div>
+      <div class="node node-subagent">
+        <div class="name">📝 critic_agent</div>
+        <div class="desc">Python ADK Demo Agent<br>评价笑话<br>打分 + 亮点 + 不足</div>
+        <div class="port">:8004 (Docker)</div>
+      </div>
+    </div>
+
+    <!-- Layer 3: Infrastructure -->
+    <div class="layer" style="gap: 8px; margin-top: 8px;">
+      <div class="node node-infra">
+        <div class="name">🐳 Docker Compose</div>
+        <div class="desc">6 服务编排<br>Healthcheck + DNS<br>Volume 持久化</div>
+      </div>
+      <div class="node node-infra">
+        <div class="name">💾 SQLite + Volume</div>
+        <div class="desc">Session 历史<br>Artifacts 产物<br>跨容器共享</div>
+      </div>
+      <div class="node node-infra">
+        <div class="name">🔑 LLM API</div>
+        <div class="desc">OpenAI 兼容<br>bigmodel.cn<br>glm-4.5-air</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 2. 消息流程 ===== -->
+<div class="section">
+  <div class="section-title">2. 单次请求完整流程</div>
+  <div class="flow-diagram">
+    <div class="flow-steps">
+      <div class="flow-step">
+        <div class="step-num">Step 1</div>
+        <div class="step-content">用户输入</div>
+        <div class="step-detail">"帮我做一个 TODO 页面"</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step">
+        <div class="step-num">Step 2</div>
+        <div class="step-content">main_agent 接收</div>
+        <div class="step-detail">adk web → /run_sse<br>创建 Session + SSE 流</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step" style="background: #1e3a5f; border: 1px solid #3b82f6;">
+        <div class="step-num">Step 3</div>
+        <div class="step-content">LLM 推理</div>
+        <div class="step-detail">判断需要 frontend_agent<br>生成 tool_call</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step" style="background: #1a2332; border: 1px solid #f97316;">
+        <div class="step-num">Step 4</div>
+        <div class="step-content">A2A 调用</div>
+        <div class="step-detail">HTTP POST /<br>JSON-RPC message/send</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step" style="background: #1a2e1a; border: 1px solid #10b981;">
+        <div class="step-num">Step 5</div>
+        <div class="step-content">frontend_agent</div>
+        <div class="step-detail">LLM 生成代码<br>npm install → build<br>→ pack tar.gz</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step">
+        <div class="step-num">Step 6</div>
+        <div class="step-content">返回结果</div>
+        <div class="step-detail">下载 URL<br>→ 用户浏览器</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 3. 多步编排流程 ===== -->
+<div class="section">
+  <div class="section-title">3. 多步编排流程 (comedian → critic)</div>
+  <div class="flow-diagram">
+    <div class="flow-steps">
+      <div class="flow-step">
+        <div class="step-num">1</div>
+        <div class="step-content">用户</div>
+        <div class="step-detail">"讲个程序员笑话再评价"</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step" style="background: #1e3a5f; border: 1px solid #3b82f6;">
+        <div class="step-num">2</div>
+        <div class="step-content">main_agent 规划</div>
+        <div class="step-detail">LLM 判断:<br>先调 comedian</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step" style="background: #1a2e1a; border: 1px solid #10b981;">
+        <div class="step-num">3</div>
+        <div class="step-content">comedian_agent</div>
+        <div class="step-detail">生成笑话<br>~3-4s</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step" style="background: #1e3a5f; border: 1px solid #3b82f6;">
+        <div class="step-num">4</div>
+        <div class="step-content">main_agent 决策</div>
+        <div class="step-detail">LLM 判断:<br>再调 critic</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step" style="background: #2e1a1a; border: 1px solid #ef4444;">
+        <div class="step-num">5</div>
+        <div class="step-content">critic_agent</div>
+        <div class="step-detail">评价笑话<br>~3-4s</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step">
+        <div class="step-num">6</div>
+        <div class="step-content">综合回复</div>
+        <div class="step-detail">LLM 汇总<br>呈现给用户</div>
+      </div>
+    </div>
+    <div style="margin-top: 16px; font-size: 12px; color: #64748b; text-align: center;">
+      ⏱ 总计 ~20-32s &nbsp;|&nbsp; LLM 调用 5 次 × 3-6s &nbsp;|&nbsp; A2A HTTP 2 次
+    </div>
+  </div>
+</div>
+
+<!-- ===== 3.5 跨语言天气查询流程 (Python → Go) ===== -->
+<div class="section">
+  <div class="section-title">3.5 跨语言天气查询流程 (Python orchestrator → Go eino_agent)</div>
+  <div class="flow-diagram">
+    <div class="flow-steps">
+      <div class="flow-step">
+        <div class="step-num">1</div>
+        <div class="step-content">用户</div>
+        <div class="step-detail">"杭州今天天气怎么样"</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step" style="background: #1e3a5f; border: 1px solid #3b82f6;">
+        <div class="step-num">2</div>
+        <div class="step-content">main_agent (Python)</div>
+        <div class="step-detail">LLM 判断:<br>调用 eino_agent</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step" style="background: #0f172a; border: 1px solid #f97316;">
+        <div class="step-num">3</div>
+        <div class="step-content">A2A JSON-RPC</div>
+        <div class="step-detail">RemoteA2aAgent<br>→ http://eino_agent:8005<br>message/send</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step" style="background: #0e4f3b; border: 1px solid #34d399;">
+        <div class="step-num">4</div>
+        <div class="step-content">eino_agent (Go)</div>
+        <div class="step-detail">Eino Runner<br>→ LLM 推理<br>→ get_weather 工具</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step" style="background: #0e4f3b; border: 1px solid #6ee7b7;">
+        <div class="step-num">5</div>
+        <div class="step-content">工具执行</div>
+        <div class="step-detail">get_weather("杭州")<br>→ 雷阵雨 31°C<br>湿度80% 风力5级</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step">
+        <div class="step-num">6</div>
+        <div class="step-content">综合回复</div>
+        <div class="step-detail">Go → A2A Task →<br>Python 整理 → 用户</div>
+      </div>
+    </div>
+    <div style="margin-top: 16px; font-size: 12px; color: #64748b; text-align: center;">
+      ⏱ 总计 ~10-16s &nbsp;|&nbsp; LLM 调用 4 次 (Python 2 + Go 2) &nbsp;|&nbsp; A2A HTTP 1 次 &nbsp;|&nbsp; 🌐 跨语言: Python → Go
+    </div>
+  </div>
+</div>
+
+<!-- ===== 4. 技术栈 ===== -->
+<div class="section">
+  <div class="section-title">4. 技术栈</div>
+  <div class="tech-grid">
+    <div class="tech-card">
+      <div class="tech-name">main_agent</div>
+      <div class="tech-desc">Python 3.11 + Google ADK (Agent Development Kit)。Orchestrator 模式，用 AgentTool 包装子 Agent，LLM 自主路由。</div>
+      <span class="tech-tag tag-python">Python</span>
+    </div>
+    <div class="tech-card">
+      <div class="tech-name">frontend_agent</div>
+      <div class="tech-desc">Node.js + @google/adk (TypeScript)。Vite + React 项目生成、构建、验证、打包全流程。</div>
+      <span class="tech-tag tag-node">Node.js</span>
+    </div>
+    <div class="tech-card">
+      <div class="tech-name">eino_agent</div>
+      <div class="tech-desc">Go 1.21 + CloudWeGo Eino (v0.8.11)。手动实现 A2A JSON-RPC Server，内嵌 get_weather MCP 风格工具，ReAct 模式执行。</div>
+      <span class="tech-tag tag-go">Go</span>
+    </div>
+    <div class="tech-card">
+      <div class="tech-name">A2A 协议</div>
+      <div class="tech-desc">Agent-to-Agent 开放协议 (v0.3.0)。JSON-RPC 2.0 over HTTP，语言无关。Python SDK: a2a-sdk；Go 手动实现。</div>
+      <span class="tech-tag tag-protocol">Protocol</span>
+    </div>
+    <div class="tech-card">
+      <div class="tech-name">Docker Compose</div>
+      <div class="tech-desc">6 服务编排：frontend / main / mock / comedian / critic / eino_agent。健康检查、内部 DNS、Volume 持久化。</div>
+      <span class="tech-tag tag-docker">Docker</span>
+    </div>
+    <div class="tech-card">
+      <div class="tech-name">adk web UI</div>
+      <div class="tech-desc">ADK 自带 Web 界面。SSE 流式输出、Agent 图可视化、Trace 调试、Session 管理。</div>
+      <span class="tech-tag tag-python">UI</span>
+    </div>
+    <div class="tech-card">
+      <div class="tech-name">LLM 后端</div>
+      <div class="tech-desc">OpenAI 兼容 API (bigmodel.cn)。通过 LiteLLM 中转，支持任意 OpenAI 兼容服务。</div>
+      <span class="tech-tag tag-protocol">LLM</span>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 5. A2A 通信细节 ===== -->
+<div class="section">
+  <div class="section-title">5. A2A 通信协议细节</div>
+  <div class="flow-diagram" style="overflow-x: auto;">
+    <table class="dataflow-table">
+      <thead>
+        <tr>
+          <th>环节</th>
+          <th>协议</th>
+          <th>端点</th>
+          <th>请求格式</th>
+          <th>响应格式</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Agent 发现</strong></td>
+          <td>HTTP GET</td>
+          <td><code>/.well-known/agent-card.json</code></td>
+          <td>—</td>
+          <td>AgentCard JSON<br>(name, url, capabilities, skills)</td>
+        </tr>
+        <tr>
+          <td><strong>发送消息</strong></td>
+          <td>JSON-RPC 2.0</td>
+          <td><code>POST /</code></td>
+          <td>
+            <code>{"jsonrpc":"2.0","method":"message/send","params":{"message":{"messageId":"...","role":"user","parts":[{"kind":"text","text":"..."}]}}}</code>
+          </td>
+          <td>
+            <code>{"jsonrpc":"2.0","result":{"artifacts":[{"parts":[{"kind":"text","text":"回复"}]}]}}</code>
+          </td>
+        </tr>
+        <tr>
+          <td><strong>流式消息</strong></td>
+          <td>JSON-RPC + SSE</td>
+          <td><code>POST /</code></td>
+          <td>同上 + <code>"streaming": true</code></td>
+          <td>SSE: <code>data: {"partial":true,"text":"..."}</code></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ===== 6. eino_agent (Go) 实现详解 ===== -->
+<div class="section">
+  <div class="section-title">6. eino_agent (Go) — 已实现的跨语言 Agent</div>
+
+  <div class="integration-box">
+    <h3>核心亮点：跨语言 A2A 通信已完全调通</h3>
+    <p style="font-size: 13px; color: #94a3b8; margin-top: 8px; line-height: 1.6;">
+      eino_agent 是一个用 Go 语言 + CloudWeGo Eino 框架编写的 A2A 子 Agent。
+      它手动实现了 A2A v0.3.0 JSON-RPC 服务端（因 <code style="background:#0f172a;padding:2px 6px;border-radius:4px;">a2a-go</code> SDK 要求 Go 1.24+），
+      直接暴露 <code style="background:#0f172a;padding:2px 6px;border-radius:4px;">/.well-known/agent-card.json</code> 和 <code style="background:#0f172a;padding:2px 6px;border-radius:4px;">POST /</code> (message/send)，
+      在 Docker Compose 中通过服务名 DNS 与 Python orchestrator 互通。
+    </p>
+
+    <div class="comparison">
+      <div class="comparison-col">
+        <h4>🐍 Python 子 Agent (ADK 自动)</h4>
+        <ul>
+          <li>用 <code>to_a2a()</code> 自动生成 A2A 服务</li>
+          <li>AgentCard 由 <code>AgentCardBuilder</code> 自动构建</li>
+          <li>JSON-RPC 路由由 a2a-sdk 处理</li>
+          <li>Agent 定义 = <code>Agent(name, model, tools, ...)</code></li>
+          <li>工具 = Python 函数 + <code>@tool</code> 装饰器</li>
+        </ul>
+      </div>
+      <div class="comparison-col">
+        <h4 style="color: #34d399;">🔵 Go eino_agent (手动实现)</h4>
+        <ul>
+          <li><code>net/http</code> 手动实现 A2A JSON-RPC</li>
+          <li>AgentCard 硬编码 + <code>SERVICE_NAME</code> 动态 URL</li>
+          <li>Eino Runner (<code>adk.NewRunner</code>) 执行 agent</li>
+          <li>Agent = <code>adk.NewChatModelAgent()</code></li>
+          <li>工具 = <code>utils.InferTool()</code> 自动推断</li>
+          <li>437 行 Go 代码，单文件 <code>main.go</code></li>
+        </ul>
+      </div>
+    </div>
+
+    <h3 style="margin-top: 24px; font-size: 14px; color: #7dd3fc;">eino_agent 架构细节</h3>
+    <table class="dataflow-table" style="margin-top: 8px;">
+      <thead>
+        <tr><th>组件</th><th>说明</th><th>技术</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>A2A Server</strong></td>
+          <td>HTTP Server 监听 :8005<br>GET /.well-known/agent-card.json 返回 AgentCard<br>POST / 处理 message/send JSON-RPC</td>
+          <td>Go <code>net/http</code></td>
+        </tr>
+        <tr>
+          <td><strong>AgentCard</strong></td>
+          <td>兼容 A2A v0.3.0 规范<br>protocolVersion: "0.3.0", preferredTransport: "JSONRPC"<br>skills: [{id: "weather_query", ...}]</td>
+          <td>静态构建 + 动态 URL</td>
+        </tr>
+        <tr>
+          <td><strong>Eino Agent</strong></td>
+          <td>ChatModelAgent (ReAct 模式)<br>instruction 定义行为 + 工具列表<br>最大 10 轮迭代</td>
+          <td>Eino ADK v0.8.11</td>
+        </tr>
+        <tr>
+          <td><strong>get_weather 工具</strong></td>
+          <td>MCP 风格工具：输入城市名 → 输出天气报告<br>温度/天气/湿度/风力</td>
+          <td><code>utils.InferTool()</code></td>
+        </tr>
+        <tr>
+          <td><strong>Docker 集成</strong></td>
+          <td>golang:1.21-alpine 多阶段构建<br>CGO_ENABLED=0 静态编译<br>Healthcheck: curl agent-card.json</td>
+          <td>Dockerfile + Compose</td>
+        </tr>
+        <tr>
+          <td><strong>与 Orchestrator 对接</strong></td>
+          <td>main_agent 通过 <code>RemoteA2aAgent</code> + <code>AgentTool</code> 包装<br>LLM 自主路由：天气相关 → eino_agent</td>
+          <td>Python ADK AgentTool</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3 style="margin-top: 24px; font-size: 14px; color: #7dd3fc;">请求/响应格式</h3>
+    <pre style="background: #0f172a; border-radius: 8px; padding: 16px; margin-top: 8px; font-size: 12px; color: #a5b4fc; overflow-x: auto; line-height: 1.6;">
+<span style="color: #7dd3fc;">// → 请求 (main_agent → eino_agent)</span>
+POST http://eino_agent:8005/
+{
+  "jsonrpc": "2.0",
+  "id": "uuid-xxx",
+  "method": "message/send",
+  "params": {
+    "message": {
+      "messageId": "msg-xxx",
+      "role": "user",
+      "parts": [{"kind": "text", "text": "查询杭州天气"}]
+    }
+  }
+}
+
+<span style="color: #7dd3fc;">// ← 响应 (eino_agent → main_agent)</span>
+{
+  "jsonrpc": "2.0",
+  "id": "uuid-xxx",
+  "result": {
+    "id": "task-xxx",
+    "contextId": "ctx-xxx",
+    "status": {
+      "state": "completed",
+      "message": {
+        "messageId": "msg-xxx",
+        "role": "agent",
+        "parts": [{"kind": "text", "text": "杭州: 雷阵雨, 31°C, 湿度80%, 风力5级"}]
+      }
+    }
+  }
+}
+    </pre>
+  </div>
+</div>
+
+<!-- ===== 7. A2A 通信链路对比 ===== -->
+<div class="section">
+  <div class="section-title">7. A2A 通信链路对比 (Python vs Go)</div>
+  <div class="integration-box">
+    <h3 style="margin-bottom: 16px;">🐍 Python 子 Agent 链路</h3>
+    <div class="flow-diagram" style="margin-bottom: 16px;">
+      <div class="flow-steps" style="flex-wrap: wrap; gap: 8px;">
+        <div class="flow-step" style="background: #1e3a5f; border: 1px solid #3b82f6; min-width: 120px;">
+          <div class="step-num">Client</div>
+          <div class="step-content">RemoteA2aAgent</div>
+          <div class="step-detail">AgentTool 包装<br>LLM 自主路由</div>
+        </div>
+        <div class="flow-arrow" style="font-size: 14px;">→</div>
+        <div class="flow-step" style="background: #0f172a; border: 1px solid #475569; min-width: 80px;">
+          <div class="step-num">Transport</div>
+          <div class="step-content">HTTP</div>
+          <div class="step-detail">JSON-RPC 2.0<br>message/send</div>
+        </div>
+        <div class="flow-arrow" style="font-size: 14px;">→</div>
+        <div class="flow-step" style="background: #1a2e1a; border: 1px solid #10b981; min-width: 120px;">
+          <div class="step-num">Server</div>
+          <div class="step-content">to_a2a()</div>
+          <div class="step-detail">Starlette / Uvicorn<br>a2a-sdk 自动处理</div>
+        </div>
+        <div class="flow-arrow" style="font-size: 14px;">→</div>
+        <div class="flow-step" style="background: #1e1a2e; border: 1px solid #a855f7; min-width: 100px;">
+          <div class="step-num">Response</div>
+          <div class="step-content">Task</div>
+          <div class="step-detail">artifacts → parts<br>JSON-RPC result</div>
+        </div>
+      </div>
+    </div>
+    <h3 style="margin-bottom: 16px; color: #34d399;">🔵 Go eino_agent 链路</h3>
+    <div class="flow-diagram">
+      <div class="flow-steps" style="flex-wrap: wrap; gap: 8px;">
+        <div class="flow-step" style="background: #1e3a5f; border: 1px solid #3b82f6; min-width: 120px;">
+          <div class="step-num">Client</div>
+          <div class="step-content">RemoteA2aAgent</div>
+          <div class="step-detail">AgentTool 包装<br>LLM 自主路由</div>
+        </div>
+        <div class="flow-arrow" style="font-size: 14px;">→</div>
+        <div class="flow-step" style="background: #0f172a; border: 1px solid #475569; min-width: 80px;">
+          <div class="step-num">Transport</div>
+          <div class="step-content">HTTP</div>
+          <div class="step-detail">JSON-RPC 2.0<br>message/send</div>
+        </div>
+        <div class="flow-arrow" style="font-size: 14px;">→</div>
+        <div class="flow-step" style="background: #0e4f3b; border: 1px solid #34d399; min-width: 120px;">
+          <div class="step-num">Server</div>
+          <div class="step-content">Go net/http</div>
+          <div class="step-detail">手动 JSON-RPC<br>ServeHTTP handler</div>
+        </div>
+        <div class="flow-arrow" style="font-size: 14px;">→</div>
+        <div class="flow-step" style="background: #0e4f3b; border: 1px solid #6ee7b7; min-width: 100px;">
+          <div class="step-num">Executor</div>
+          <div class="step-content">Eino Runner</div>
+          <div class="step-detail">adk.NewRunner<br>ReAct 执行</div>
+        </div>
+        <div class="flow-arrow" style="font-size: 14px;">→</div>
+        <div class="flow-step" style="background: #1e1a2e; border: 1px solid #a855f7; min-width: 100px;">
+          <div class="step-num">Response</div>
+          <div class="step-content">A2ATask</div>
+          <div class="step-detail">status.message<br>JSON-RPC result</div>
+        </div>
+      </div>
+    </div>
+    <p style="font-size: 12px; color: #64748b; text-align: center; margin-top: 12px;">
+      两条链路对 Orchestrator 完全透明 — RemoteA2aAgent 不感知后端语言，只看 A2A 协议
+    </p>
+  </div>
+</div>
+
+<!-- ===== 8. 文件结构 ===== -->
+<div class="section">
+  <div class="section-title">8. 项目文件结构</div>
+  <div class="flow-diagram" style="text-align: left; font-family: monospace; font-size: 12px; line-height: 1.8;">
+    <span style="color: #7dd3fc;">adk_swarm/</span>
+    <br>├── <span style="color: #94a3b8;">agent.py</span>              <span style="color: #64748b;"># 根入口 (adk web 发现 agent)</span>
+    <br>├── <span style="color: #94a3b8;">docker-compose.yml</span>     <span style="color: #64748b;"># 6 服务编排</span>
+    <br>├── <span style="color: #94a3b8;">.env</span>                  <span style="color: #64748b;"># API Key + 服务地址</span>
+    <br>├── <span style="color: #f97316;">main_agent/</span>            <span style="color: #64748b;"># ─── 主 Agent (Orchestrator) ───</span>
+    <br>│   ├── agent.py            <span style="color: #64748b;"># root_agent 定义 + A2A delegate</span>
+    <br>│   ├── cli.py              <span style="color: #64748b;"># 交互式 CLI 入口</span>
+    <br>│   ├── session.py          <span style="color: #64748b;"># SQLite Session 持久化</span>
+    <br>│   ├── compression.py      <span style="color: #64748b;"># 上下文压缩</span>
+    <br>│   ├── file_server.py      <span style="color: #64748b;"># FastAPI 静态文件服务</span>
+    <br>│   ├── Dockerfile          <span style="color: #64748b;"># 容器镜像</span>
+    <br>│   └── test_*.py           <span style="color: #64748b;"># 编排/路由验证测试</span>
+    <br>├── <span style="color: #a855f7;">frontend_agent/</span>        <span style="color: #64748b;"># ─── 前端子 Agent ───</span>
+    <br>│   ├── src/
+    <br>│   │   ├── server.ts       <span style="color: #64748b;"># Express + toA2a()</span>
+    <br>│   │   ├── frontend_agent.ts <span style="color: #64748b;"># BaseAgent 实现</span>
+    <br>│   │   ├── generator.ts    <span style="color: #64748b;"># LLM 生成 Vite 项目文件</span>
+    <br>│   │   ├── builder.ts      <span style="color: #64748b;"># npm install + build + verify</span>
+    <br>│   │   └── packer.ts       <span style="color: #64748b;"># tar.gz 打包</span>
+    <br>│   └── Dockerfile
+    <br>├── <span style="color: #34d399;">eino_agent/</span>             <span style="color: #64748b;"># ─── Go Eino Agent (跨语言) ───</span>
+    <br>│   ├── main.go             <span style="color: #64748b;"># A2A Server + Eino Agent + 天气工具</span>
+    <br>│   ├── go.mod / go.sum     <span style="color: #64748b;"># Go 模块依赖</span>
+    <br>│   └── Dockerfile          <span style="color: #64748b;"># 多阶段构建 (golang:1.21 → alpine)</span>
+    <br>├── <span style="color: #10b981;">mock_agent/</span>             <span style="color: #64748b;"># ─── 后端 Mock Agent ───</span>
+    <br>│   ├── agent.py            <span style="color: #64748b;"># backend_agent 定义</span>
+    <br>│   └── server.py           <span style="color: #64748b;"># to_a2a() A2A 服务</span>
+    <br>├── <span style="color: #10b981;">demo_agents/</span>            <span style="color: #64748b;"># ─── Demo 子 Agent ───</span>
+    <br>│   ├── comedian_server.py  <span style="color: #64748b;"># 讲笑话 A2A 服务</span>
+    <br>│   └── critic_server.py    <span style="color: #64748b;"># 评论员 A2A 服务</span>
+    <br>└── <span style="color: #10b981;">tools/</span>                  <span style="color: #64748b;"># MCP 工具 (可选)</span>
+  </div>
+</div>
+
+<!-- ===== 9. 性能瓶颈 ===== -->
+<div class="section">
+  <div class="section-title">9. 已知性能瓶颈</div>
+  <div class="flow-diagram">
+    <table class="dataflow-table">
+      <thead>
+        <tr><th>瓶颈</th><th>影响</th><th>可优化?</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>LLM 调用次数</strong></td>
+          <td>每步 3-6s，编排任务需 5+ 次调用</td>
+          <td>✅ 并行调用 / 精简 prompt</td>
+        </tr>
+        <tr>
+          <td><strong>SSE 事件过多</strong></td>
+          <td>"你好" 产生 82 个 partial 事件，前端逐条解析</td>
+          <td>✅ 合并 token / 前端增量渲染</td>
+        </tr>
+        <tr>
+          <td><strong>Thought 事件</strong></td>
+          <td>44 个 thought 事件无用户价值，增加解析负担</td>
+          <td>✅ 前端过滤 / 服务端不发</td>
+        </tr>
+        <tr>
+          <td><strong>HTTP 连接开销</strong></td>
+          <td>A2A 子 Agent 调用每次新建连接</td>
+          <td>✅ requests.Session 连接池</td>
+        </tr>
+        <tr>
+          <td><strong>LLM 模型延迟</strong></td>
+          <td>glm-4.5-air 首字 ~1s</td>
+          <td>⚠️ 换更快模型或本地模型</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div style="text-align: center; color: #475569; font-size: 12px; margin-top: 40px; padding-bottom: 20px;">
+  adk_swarm 架构文档 · 更新于 2026-06-17 · 含 eino_agent (Go) 跨语言集成
+</div>
+
+</body>
+</html>
