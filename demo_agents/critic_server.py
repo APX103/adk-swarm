@@ -4,20 +4,22 @@ Evaluates a joke handed to it. Used to prove the orchestration chain:
 Main -> comedian -> Main -> critic -> Main.
 """
 
+import asyncio
 import os
 
 from dotenv import load_dotenv
-from google.adk.a2a.utils.agent_to_a2a import to_a2a
+from google.adk.a2a.utils.agent_to_a2a import AgentCardBuilder, to_a2a
 from google.adk.agents import Agent
 from google.adk.models.lite_llm import LiteLlm
 
 load_dotenv()
 os.environ.setdefault("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY", ""))
-os.environ.setdefault("OPENAI_API_BASE", os.getenv("OPENAI_BASE_URL", ""))
+os.environ.setdefault("OPENAI_BASE", os.getenv("OPENAI_BASE_URL", ""))
 MODEL = os.getenv("OPENAI_MODEL", "glm-4.5-air")
 
 HOST = os.getenv("CRITIC_HOST", "0.0.0.0")
 PORT = int(os.getenv("CRITIC_PORT", "8004"))
+SERVICE_NAME = os.getenv("SERVICE_NAME", "critic")
 
 critic_agent = Agent(
     name="critic_agent",
@@ -33,7 +35,17 @@ critic_agent = Agent(
     tools=[],
 )
 
-app = to_a2a(critic_agent, host=HOST, port=PORT, protocol="http")
+_card = asyncio.run(
+    AgentCardBuilder(agent=critic_agent, rpc_url=f"http://{SERVICE_NAME}:{PORT}").build()
+)
+
+app = to_a2a(
+    critic_agent,
+    host=HOST,
+    port=PORT,
+    protocol="http",
+    agent_card=_card,
+)
 
 if __name__ == "__main__":
     import uvicorn

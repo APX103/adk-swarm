@@ -4,10 +4,11 @@ This is a deliberately small, self-contained agent used to prove the
 orchestration chain: Main -> comedian -> Main -> critic -> Main.
 """
 
+import asyncio
 import os
 
 from dotenv import load_dotenv
-from google.adk.a2a.utils.agent_to_a2a import to_a2a
+from google.adk.a2a.utils.agent_to_a2a import AgentCardBuilder, to_a2a
 from google.adk.agents import Agent
 from google.adk.models.lite_llm import LiteLlm
 
@@ -18,6 +19,7 @@ MODEL = os.getenv("OPENAI_MODEL", "glm-4.5-air")
 
 HOST = os.getenv("COMEDIAN_HOST", "0.0.0.0")
 PORT = int(os.getenv("COMEDIAN_PORT", "8003"))
+SERVICE_NAME = os.getenv("SERVICE_NAME", "comedian")
 
 comedian_agent = Agent(
     name="comedian_agent",
@@ -34,7 +36,17 @@ comedian_agent = Agent(
     tools=[],
 )
 
-app = to_a2a(comedian_agent, host=HOST, port=PORT, protocol="http")
+_card = asyncio.run(
+    AgentCardBuilder(agent=comedian_agent, rpc_url=f"http://{SERVICE_NAME}:{PORT}").build()
+)
+
+app = to_a2a(
+    comedian_agent,
+    host=HOST,
+    port=PORT,
+    protocol="http",
+    agent_card=_card,
+)
 
 if __name__ == "__main__":
     import uvicorn

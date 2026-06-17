@@ -9,8 +9,8 @@
 1. [环境要求](#环境要求)
 2. [项目结构](#项目结构)
 3. [配置文件](#配置文件)
-4. [启动前端子 Agent](#启动前端子-agent)
-5. [启动主 Agent](#启动主-agent)
+4. [Docker Compose 一键启动（推荐）](#docker-compose-一键启动推荐)
+5. [手动启动（本地开发）](#手动启动本地开发)
 6. [交互使用](#交互使用)
 7. [验证生成的项目](#验证生成的项目)
 8. [常见问题排查](#常见问题排查)
@@ -20,10 +20,10 @@
 
 ## 环境要求
 
-- **Docker** 29+ 与 **Docker Compose**（用于运行前端子 Agent）
-- **Node.js 22** + **npm 10**（本地 TypeScript 编译检查）
-- **Python 3.11**（主 Agent 运行环境）
-- **uv**（推荐，用于创建 Python 虚拟环境并安装依赖）
+- **Docker** 29+ 与 **Docker Compose**（一键启动全部服务，推荐）
+- **Node.js 22** + **npm 10**（仅在本地开发/编译检查前端子 Agent 时需要）
+- **Python 3.11**（仅在本地开发主 Agent 时需要）
+- **uv**（推荐，本地开发时创建 Python 虚拟环境）
 - 可用的 OpenAI 兼容 API Key（本项目默认使用 `https://open.bigmodel.cn/api/coding/paas/v4`）
 
 ---
@@ -91,7 +91,90 @@ FILE_SERVER_PORT=8080
 
 ---
 
-## 启动前端子 Agent
+## Docker Compose 一键启动（推荐）
+
+所有服务（前端 Agent、主 Agent、后端 mock、demo 子 Agent）已全部容器化，通过一个 `docker compose` 命令即可启动整个集群。
+
+### 1. 确认 .env 已配置
+
+确保项目根目录的 `.env` 已填写有效的 API Key：
+
+```env
+OPENAI_BASE_URL=https://open.bigmodel.cn/api/coding/paas/v4
+OPENAI_API_KEY=<your-key>
+OPENAI_MODEL=glm-4.5-air
+```
+
+### 2. 构建并启动所有服务
+
+```bash
+docker compose up -d --build
+```
+
+这将启动 5 个服务：
+
+| 服务 | 容器名 | 端口 | 说明 |
+|------|--------|------|------|
+| frontend_agent | adk_swarm-frontend_agent-1 | 8001 | 前端项目生成 |
+| main_agent | adk_swarm-main_agent-1 | 8080 | 主 Orchestrator |
+| mock_agent | adk_swarm-mock_agent-1 | 8002 | 后端 mock |
+| comedian | adk_swarm-comedian-1 | 8003 | 讲笑话 demo |
+| critic | adk_swarm-critic-1 | 8004 | 笑话评论 demo |
+
+Compose 内建 healthcheck 和 `depends_on`，主 Agent 会等前端 Agent 和 mock Agent 就绪后再启动。
+
+### 3. 确认所有服务健康
+
+```bash
+docker compose ps
+```
+
+应全部显示 `healthy`：
+
+```
+NAME                         STATUS
+adk_swarm-frontend_agent-1   Up (healthy)
+adk_swarm-main_agent-1       Up
+adk_swarm-mock_agent-1       Up (healthy)
+adk_swarm-comedian-1         Up (healthy)
+adk_swarm-critic-1           Up (healthy)
+```
+
+也可以逐个验证 A2A Agent Card：
+
+```bash
+curl -s http://localhost:8001/.well-known/agent-card.json | python3 -c "import sys,json; print(json.load(sys.stdin)['name'])"
+curl -s http://localhost:8002/.well-known/agent-card.json | python3 -c "import sys,json; print(json.load(sys.stdin)['name'])"
+curl -s http://localhost:8003/.well-known/agent-card.json | python3 -c "import sys,json; print(json.load(sys.stdin)['name'])"
+curl -s http://localhost:8004/.well-known/agent-card.json | python3 -c "import sys,json; print(json.load(sys.stdin)['name'])"
+```
+
+### 4. 进入主 Agent 交互式 CLI
+
+主 Agent 容器以 `sleep infinity` 保持运行，通过 `exec` 进入交互：
+
+```bash
+docker compose exec main_agent python cli.py
+```
+
+> 注意：如果本地 `python` 指向 Python 2，可能需要 `docker compose exec main_agent python3 cli.py`。
+
+**可用命令：** `/sessions` `/resume <id>` `/new` `/history` `/compact` `/help` `/quit`
+
+### 5. 查看日志
+
+```bash
+# 所有服务
+docker compose logs -f
+
+# 指定服务
+docker compose logs -f frontend_agent
+docker compose logs -f main_agent
+```
+
+---
+
+## 手动启动（本地开发）
 
 前端子 Agent 运行在 Docker 容器中，与主 Agent 通过 HTTP/A2A 通信。
 
@@ -313,24 +396,32 @@ uv pip install fastapi uvicorn[standard] python-dotenv requests
 
 ## 关闭与清理
 
-### 停止前端 Agent 容器
+### 停止所有服务
 
 ```bash
-cd /path/to/adk_swarm
 docker compose down
 ```
 
-### 删除已生成的前端项目（释放磁盘）
+### 停止并删除 volumes（会丢失 session 历史和 artifacts）
+
+```bash
+docker compose down -v
+```
+
+> 数据持久化：session 历史（SQLite）和生成的项目文件存储在 named volume 中，
+> `docker compose down` 不会删除它们。只有 `docker compose down -v` 才会清空。
+
+### 查看存储占用
+
+```bash
+docker system df
+```
+
+### 手动启动方式下的清理
 
 ```bash
 rm -rf main_agent/artifacts/*
-```
-
-### 删除虚拟环境（如需完全重装）
-
-```bash
-cd main_agent
-rm -rf .venv
+cd main_agent && rm -rf .venv
 ```
 
 ---

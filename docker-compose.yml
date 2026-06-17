@@ -18,5 +18,103 @@ services:
       timeout: 5s
       retries: 5
 
+  main_agent:
+    build:
+      context: .
+      dockerfile: main_agent/Dockerfile
+    ports:
+      - "8080:8080"    # adk web UI + artifact serving
+    environment:
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL:-glm-4.5-air}
+      # Internal service discovery via compose DNS.
+      - FRONTEND_AGENT_URL=http://frontend_agent:8001
+      - BACKEND_AGENT_URL=http://mock_agent:8002
+      - COMEDIAN_AGENT_URL=http://comedian:8003
+      - CRITIC_AGENT_URL=http://critic:8004
+      - FILE_SERVER_PORT=8080
+      - SESSIONS_DB_PATH=/app/data/sessions.db
+      - ADK_WEB=true
+    volumes:
+      - main_agent_artifacts:/app/artifacts
+      - main_agent_sessions:/app/data
+    command: ["adk", "web", ".", "--host", "0.0.0.0", "--port", "8080"]
+    depends_on:
+      frontend_agent:
+        condition: service_healthy
+      mock_agent:
+        condition: service_healthy
+
+  mock_agent:
+    build:
+      context: .
+      dockerfile: mock_agent/Dockerfile
+    ports:
+      - "8002:8002"
+    environment:
+      - MOCK_AGENT_HOST=0.0.0.0
+      - MOCK_AGENT_PORT=8002
+      - SERVICE_NAME=mock_agent
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL:-glm-4.5-air}
+    volumes:
+      - mock_agent_artifacts:/app/artifacts
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/.well-known/agent-card.json"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  comedian:
+    build:
+      context: .
+      dockerfile: demo_agents/Dockerfile
+    ports:
+      - "8003:8003"
+    environment:
+      - COMEDIAN_HOST=0.0.0.0
+      - COMEDIAN_PORT=8003
+      - SERVICE_NAME=comedian
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL:-glm-4.5-air}
+    volumes:
+      - comedian_artifacts:/app/artifacts
+    command: ["python", "comedian_server.py"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/.well-known/agent-card.json"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  critic:
+    build:
+      context: .
+      dockerfile: demo_agents/Dockerfile
+    ports:
+      - "8004:8004"
+    environment:
+      - CRITIC_HOST=0.0.0.0
+      - CRITIC_PORT=8004
+      - SERVICE_NAME=critic
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL:-glm-4.5-air}
+    volumes:
+      - critic_artifacts:/app/artifacts
+    command: ["python", "critic_server.py"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8004/.well-known/agent-card.json"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 volumes:
   frontend_workspace:
+  main_agent_artifacts:
+  main_agent_sessions:
+  mock_agent_artifacts:
+  comedian_artifacts:
+  critic_artifacts:

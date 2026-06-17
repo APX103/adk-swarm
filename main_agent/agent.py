@@ -35,12 +35,12 @@ from google.adk.models.lite_llm import LiteLlm
 from google.adk.tools.agent_tool import AgentTool
 from google.adk.tools.tool_context import ToolContext
 
-# file_server is a sibling module. With __init__.py present, the package import
-# works whether run as `python cli.py` (cwd on path) or `adk web .` (package mode).
-try:
+# file_server is a sibling module. Use relative import when this module is
+# loaded as part of a package (adk web), absolute import when run directly.
+if __package__:
+    from .file_server import ARTIFACTS_DIR, run_file_server
+else:
     from file_server import ARTIFACTS_DIR, run_file_server
-except ImportError:
-    from main_agent.file_server import ARTIFACTS_DIR, run_file_server
 
 load_dotenv()
 
@@ -168,6 +168,11 @@ def generate_frontend_project(request: str, tool_context: ToolContext) -> str:
     artifact_url = _extract_url(artifact_text)
     if not artifact_url:
         raise RuntimeError(f"Frontend agent did not return a download URL. Response: {artifact_text}")
+
+    # Inside Docker, the frontend agent's "localhost" resolves to ourselves, not
+    # to the frontend_agent container. Rewrite to the compose service name.
+    frontend_host = FRONTEND_AGENT_URL.replace("http://", "").replace("https://", "")
+    artifact_url = re.sub(r"https?://localhost(:\d+)?", f"http://{frontend_host}", artifact_url)
 
     save_dir = os.path.join(ARTIFACTS_DIR, session_id)
     save_path = os.path.join(save_dir, "project.tar.gz")
@@ -334,8 +339,10 @@ root_agent = Agent(
     tools=[generate_frontend_project, get_current_time, *_DELEGATE_TOOLS, *_MCP_TOOLS],
 )
 
-# Start the static file server on import so it is available for `adk web` as well.
-_start_file_server()
+# Start the static file server on import so it is available for `adk run` as well.
+# Skip when running under `adk web` (it has its own server) or docker compose.
+if not os.environ.get("ADK_WEB"):
+    _start_file_server()
 
 if __name__ == "__main__":
     print(f"File server started at http://localhost:{FILE_SERVER_PORT}")

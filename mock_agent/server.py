@@ -5,10 +5,11 @@ It exposes the agent at http://localhost:<PORT>/ with an auto-generated agent
 card at /.well-known/agent-card.json, speaking A2A (message/send).
 """
 
+import asyncio
 import os
 
 from dotenv import load_dotenv
-from google.adk.a2a.utils.agent_to_a2a import to_a2a
+from google.adk.a2a.utils.agent_to_a2a import AgentCardBuilder, to_a2a
 
 # Support both `python server.py` from mock_agent/ and `python mock_agent/server.py` from root.
 try:
@@ -20,16 +21,22 @@ load_dotenv()
 
 HOST = os.getenv("MOCK_AGENT_HOST", "0.0.0.0")
 PORT = int(os.getenv("MOCK_AGENT_PORT", "8002"))
+# Service name for agent card URL (used by other agents to reach us).
+SERVICE_NAME = os.getenv("SERVICE_NAME", "mock_agent")
 
-# One call wraps the BaseAgent in a full A2A Starlette app: agent card +
-# /jsonrpc endpoint + everything the main agent's RemoteA2aAgent will talk to.
+# Build agent card with the correct RPC URL so other services can reach us
+# inside the Docker network (not 0.0.0.0 or localhost).
+_card = asyncio.run(
+    AgentCardBuilder(agent=backend_agent, rpc_url=f"http://{SERVICE_NAME}:{PORT}").build()
+)
+
 app = to_a2a(
     backend_agent,
     host=HOST,
     port=PORT,
     protocol="http",
+    agent_card=_card,
 )
-
 
 if __name__ == "__main__":
     import uvicorn

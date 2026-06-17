@@ -16,7 +16,9 @@ DEFAULT_USER = "cli-user"
 # A local SQLite DB keeps everything in-repo and needs no extra services.
 # DatabaseSessionService uses SQLAlchemy's async engine, so we must pin the
 # async driver (aiosqlite) explicitly in the URL.
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sessions.db")
+DB_PATH = os.environ.get("SESSIONS_DB_PATH") or os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "sessions.db"
+)
 DB_URL = f"sqlite+aiosqlite:///{DB_PATH}"
 
 # Singleton — avoid creating a new async engine on every CLI command.
