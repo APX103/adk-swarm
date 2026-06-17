@@ -96,6 +96,48 @@ def _fetch_registry_specs(registry_url: str) -> list[tuple[str, str, str]]:
         return []
 
 
+def _register_self(registry_url: str) -> None:
+    """Register this agent into the registry so others can discover it.
+
+    Idempotent: a 409 (already exists) is treated as success. Non-fatal — if the
+    registry is down, main_agent still runs (it just won't be discoverable until
+    the next poller cycle picks it up after a manual register).
+    """
+    if not registry_url:
+        return
+    import socket
+
+    service_name = os.getenv("SERVICE_NAME", "main_agent")
+    a2a_port = os.getenv("MAIN_AGENT_A2A_PORT", "8081")
+    own_url = f"http://{service_name}:{a2a_port}"
+    payload = {
+        "name": "main_agent",
+        "url": own_url,
+        "description": (
+            "Top-level orchestrator that delegates to specialist agents. "
+            "Also has built-in tools: get_current_time (reports the time), "
+            "and generate_frontend_project."
+        ),
+        "type": "orchestrator",
+    }
+    try:
+        response = requests.post(
+            f"{registry_url.rstrip('/')}/agents", json=payload, timeout=10
+        )
+        if response.status_code == 201:
+            print(f"[agent] registered self as main_agent @ {own_url}")
+        elif response.status_code == 409:
+            # Already registered (e.g. persistent DB across restarts). That's fine.
+            pass
+        else:
+            print(
+                f"[agent] self-registration unexpected status {response.status_code}: "
+                f"{response.text[:120]}"
+            )
+    except Exception as e:
+        print(f"[agent] self-registration failed (non-fatal): {e}")
+
+
 def _extract_url(text: str) -> Optional[str]:
     if not text:
         return None
@@ -453,6 +495,11 @@ _CURRENT_AGENT = root_agent
 # Skip when running under `adk web` (it has its own server) or docker compose.
 if not os.environ.get("ADK_WEB"):
     _start_file_server()
+
+# Register ourselves into the registry so other agents (e.g. eino_agent) can
+# discover us via service discovery. Non-fatal if the registry is down.
+if AGENT_REGISTRY_URL:
+    _register_self(AGENT_REGISTRY_URL)
 
 # Start dynamic discovery from the registry if configured.
 _start_registry_poller()

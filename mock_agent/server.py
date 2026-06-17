@@ -17,6 +17,8 @@ try:
 except ImportError:
     from mock_agent.agent import backend_agent
 
+from _register import register_self
+
 load_dotenv()
 
 HOST = os.getenv("MOCK_AGENT_HOST", "0.0.0.0")
@@ -28,6 +30,14 @@ SERVICE_NAME = os.getenv("SERVICE_NAME", "mock_agent")
 # inside the Docker network (not 0.0.0.0 or localhost).
 _card = asyncio.run(
     AgentCardBuilder(agent=backend_agent, rpc_url=f"http://{SERVICE_NAME}:{PORT}").build()
+)
+
+# Register self into the registry so main_agent/eino_agent can discover us.
+register_self(
+    name="backend_agent",
+    service_name=SERVICE_NAME,
+    port=PORT,
+    description=getattr(backend_agent, "description", "Backend specialist agent."),
 )
 
 app = to_a2a(

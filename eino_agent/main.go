@@ -172,23 +172,6 @@ func getWeather(_ context.Context, input *WeatherInput) (*WeatherOutput, error) 
 }
 
 // =====================================================================
-// Time Tool (built-in)
-// =====================================================================
-
-type EmptyInput struct{}
-
-type TimeOutput struct {
-	Time string `json:"time"`
-}
-
-func getTime(_ context.Context, _ *EmptyInput) (*TimeOutput, error) {
-	now := time.Now()
-	return &TimeOutput{
-		Time: now.Format("2006-01-02 15:04:05 MST"),
-	}, nil
-}
-
-// =====================================================================
 // A2A Client — call remote agents via JSON-RPC
 // =====================================================================
 
@@ -316,6 +299,54 @@ type DelegateInput struct {
 
 type DelegateOutput struct {
 	Response string `json:"response"`
+}
+
+// EmptyInput is the zero-arg input type for tools that take no arguments
+// (InferTool's generic inference needs a concrete input type).
+type EmptyInput struct{}
+
+// CallAgentInput is the input for the runtime call_agent tool.
+type CallAgentInput struct {
+	Name    string `json:"name" jsonschema:"description=要调用的 Agent 名称（必须先在集群中存在）。"`
+	Request string `json:"request" jsonschema:"description=要发送给该 Agent 的请求内容。"`
+}
+
+// buildCallAgentTool builds a tool that resolves an agent by name from the
+// registry at call time and contacts it over A2A. This closes the discovery
+// loop for peers that registered after our startup snapshot (or for any name
+// the LLM learned from list_registry_agents).
+func buildCallAgentTool(rc *RegistryClient, selfName string) tool.BaseTool {
+	fn := func(ctx context.Context, input *CallAgentInput) (*DelegateOutput, error) {
+		// Resolve the peer's URL at call time (live discovery).
+		peers := rc.ListAgents(ctx, selfName)
+		var found *AgentEntry
+		for i := range peers {
+			if peers[i].Name == input.Name {
+				found = &peers[i]
+				break
+			}
+		}
+		if found == nil {
+			return nil, fmt.Errorf("agent %q 不在集群中（或当前不可达）", input.Name)
+		}
+		log.Printf("[eino_agent] → 调用 %s @ %s: %s", found.Name, found.URL, truncate(input.Request, 100))
+		resp, err := callA2AAgent(found.URL, input.Request)
+		if err != nil {
+			log.Printf("[eino_agent] ✗ %s 调用失败: %v", found.Name, err)
+			return nil, fmt.Errorf("%s 调用失败: %w", found.Name, err)
+		}
+		log.Printf("[eino_agent] ← %s 返回: %s", found.Name, truncate(resp, 200))
+		return &DelegateOutput{Response: resp}, nil
+	}
+	t, err := utils.InferTool("call_agent",
+		"按名称调用集群中的任意 Agent（A2A）。先用 list_registry_agents 确认该 Agent 存在，"+
+			"再用本工具传入 name 和 request。例如要获取当前时间，name 填 main_agent。",
+		fn)
+	if err != nil {
+		log.Printf("[eino_agent] failed to build call_agent tool: %v", err)
+		return nil
+	}
+	return t
 }
 
 // buildDelegateTools turns discovered agents into A2A delegate tools.
@@ -450,18 +481,11 @@ func buildAgentCard(externalURL string) AgentCard {
 				Examples:    []string{"查询北京天气", "上海今天天气怎么样"},
 			},
 			{
-				ID:          "time_query",
-				Name:        "获取时间",
-				Description: "使用内置 get_time 工具获取当前时间。",
-				Tags:        []string{"time", "tool"},
-				Examples:    []string{"现在几点了", "当前时间是多少"},
-			},
-			{
 				ID:          "cluster_discovery",
 				Name:        "集群服务发现",
-				Description: "通过 Agent Registry 发现并调用集群中的其他 Agent（A2A）。",
+				Description: "通过 Agent Registry 发现并调用集群中的其他 Agent（A2A）。例如报时能力由集群中的 main_agent 提供。",
 				Tags:        []string{"discovery", "a2a", "mcp"},
-				Examples:    []string{"集群里有哪些 agent", "让笑话 agent 讲个笑话"},
+				Examples:    []string{"集群里有哪些 agent", "现在几点了", "让笑话 agent 讲个笑话"},
 			},
 		},
 		SupportsAuthExt: false,
@@ -799,7 +823,6 @@ body{background:#0f172a;color:#e2e8f0;font-family:-apple-system,BlinkMacSystemFo
   <div class="badges">
     <span class="badge badge-go">Go 1.21</span>
     <span class="badge badge-tool">get_weather</span>
-    <span class="badge badge-tool">get_time</span>
     <span class="badge badge-a2a">MCP → Registry</span>
     <span class="badge badge-a2a">A2A P2P</span>
   </div>
@@ -865,18 +888,14 @@ func main() {
 		log.Fatalf("failed to create chat model: %v", err)
 	}
 
-	// Built-in tools.
+	// Built-in tool: weather (eino's own mock capability).
+	// NOTE: no built-in time tool — eino must discover an agent that can tell
+	// time (e.g. main_agent) via the registry and call it over A2A.
 	weatherTool, err := utils.InferTool("get_weather",
 		"查询指定城市的天气信息（温度、天气状况、湿度、风力）。输入城市名称即可。",
 		getWeather)
 	if err != nil {
 		log.Fatalf("failed to create weather tool: %v", err)
-	}
-	timeTool, err := utils.InferTool("get_time",
-		"获取当前时间。无需参数。当用户询问现在几点、当前时间、日期时使用。",
-		getTime)
-	if err != nil {
-		log.Fatalf("failed to create time tool: %v", err)
 	}
 
 	// Connect to the registry via MCP (self-register + discover peers).
@@ -909,34 +928,46 @@ func main() {
 	delegateTools := buildDelegateTools(peers)
 
 	// Also expose the registry's list_agents as an LLM tool (re-discovery).
-	var allTools []tool.BaseTool = []tool.BaseTool{weatherTool, timeTool}
+	var allTools []tool.BaseTool = []tool.BaseTool{weatherTool}
 	allTools = append(allTools, delegateTools...)
 	if registry != nil {
+		// list_registry_agents: runtime re-discovery of what's in the cluster.
 		allTools = append(allTools, mustBuildListAgentsTool(registry, selfName))
+		// call_agent: resolve+call any agent by name at runtime (closes the
+		// discovery loop for peers that registered after our startup snapshot).
+		if ct := buildCallAgentTool(registry, selfName); ct != nil {
+			allTools = append(allTools, ct)
+		}
 	}
 
 	helpText := delegateToolsHelp(peers)
 
 	agent, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
 		Name:        selfName,
-		Description: "基于 CloudWeGo Eino 框架的 Go Agent，具备天气查询、报时能力，并通过服务发现调用集群中其他 Agent。",
+		Description: "基于 CloudWeGo Eino 框架的 Go Agent，具备天气查询能力，并通过服务发现调用集群中其他 Agent（如报时）。",
 		Instruction: `你是一个基于 CloudWeGo Eino 框架的智能助手，运行在 Go 语言环境中。
-你通过 Agent Registry（MCP 服务发现）接入集群，并能直接调用集群中的其他 Agent。
+你通过 Agent Registry（MCP 服务发现）接入集群。你【自身没有】报时、写笑话、写代码等
+能力——这些都必须通过服务发现找到对应的 Agent，再调用它（A2A P2P）。
 
-内置能力：
-1. 天气查询：使用 get_weather 工具查询任何城市的天气状况。
-2. 获取时间：使用 get_time 工具获取当前时间。
+你的内置能力仅限：
+- 天气查询：使用 get_weather 工具。
 
-集群中的其他 Agent（通过服务发现动态获得，可用工具如下）：
+启动时已发现的集群 Agent（快照，可能不全）：
 ` + helpText + `
 
+如何调用集群中的其他 Agent（重要）：
+1. 如果不确定集群里有什么，先调用 list_registry_agents 重新发现当前可用的 Agent。
+2. 用 call_agent 工具调用某个 Agent：传入它的 name 和 request。
+
+典型场景：
+- 用户问"现在几点/当前时间"：集群中的 main_agent 会报时。调用 call_agent，
+  name="main_agent"，request="现在几点了"。
+- 用户要"讲个笑话"：调用 call_agent，name="comedian_agent"（先用 list_registry_agents 确认存在）。
+
 规则：
-- 当用户询问天气时，必须调用 get_weather 工具获取数据，不要编造。
-- 当用户询问当前时间时，必须调用 get_time 工具获取，不要编造。
-- 当用户的请求匹配集群中某个 Agent 的能力时，使用对应的 ask_<agent> 工具委派给它。
-- 如果不确定集群里有什么，可调用 list_registry_agents 工具重新发现。
-- 使用简洁的中文回答。
-- 工具调用失败时如实告知用户。`,
+- 绝不自己猜测或编造时间、笑话等你没有的能力——必须调用集群里的 Agent。
+- 当用户询问天气时，调用内置 get_weather 工具。
+- 使用简洁的中文回答。工具调用失败时如实告知用户。`,
 		Model: chatModel,
 		ToolsConfig: adk.ToolsConfig{
 			ToolsNodeConfig: compose.ToolsNodeConfig{

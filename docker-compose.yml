@@ -88,8 +88,12 @@ services:
       - OPENAI_BASE_URL=${OPENAI_BASE_URL}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_MODEL=${OPENAI_MODEL:-glm-4.5-air}
+      - AGENT_REGISTRY_URL=http://agent_registry:8006
     volumes:
       - mock_agent_artifacts:/app/artifacts
+    depends_on:
+      agent_registry:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8002/.well-known/agent-card.json"]
       interval: 10s
@@ -109,8 +113,12 @@ services:
       - OPENAI_BASE_URL=${OPENAI_BASE_URL}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_MODEL=${OPENAI_MODEL:-glm-4.5-air}
+      - AGENT_REGISTRY_URL=http://agent_registry:8006
     volumes:
       - comedian_artifacts:/app/artifacts
+    depends_on:
+      agent_registry:
+        condition: service_healthy
     command: ["python", "comedian_server.py"]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8003/.well-known/agent-card.json"]
@@ -131,8 +139,12 @@ services:
       - OPENAI_BASE_URL=${OPENAI_BASE_URL}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_MODEL=${OPENAI_MODEL:-glm-4.5-air}
+      - AGENT_REGISTRY_URL=http://agent_registry:8006
     volumes:
       - critic_artifacts:/app/artifacts
+    depends_on:
+      agent_registry:
+        condition: service_healthy
     command: ["python", "critic_server.py"]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8004/.well-known/agent-card.json"]

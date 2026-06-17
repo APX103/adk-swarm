@@ -12,6 +12,8 @@ from google.adk.a2a.utils.agent_to_a2a import AgentCardBuilder, to_a2a
 from google.adk.agents import Agent
 from google.adk.models.lite_llm import LiteLlm
 
+from _register import register_self
+
 load_dotenv()
 os.environ.setdefault("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY", ""))
 os.environ.setdefault("OPENAI_API_BASE", os.getenv("OPENAI_BASE_URL", ""))
@@ -38,6 +40,14 @@ comedian_agent = Agent(
 
 _card = asyncio.run(
     AgentCardBuilder(agent=comedian_agent, rpc_url=f"http://{SERVICE_NAME}:{PORT}").build()
+)
+
+# Register self into the registry so main_agent/eino_agent can discover us.
+register_self(
+    name="comedian_agent",
+    service_name=SERVICE_NAME,
+    port=PORT,
+    description=comedian_agent.description,
 )
 
 app = to_a2a(

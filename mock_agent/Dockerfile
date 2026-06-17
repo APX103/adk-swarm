@@ -11,5 +11,6 @@ COPY main_agent/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY mock_agent/ .
+COPY demo_agents/_register.py ./_register.py
 
 CMD ["python", "server.py"]
