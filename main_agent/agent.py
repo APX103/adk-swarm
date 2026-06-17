@@ -23,6 +23,7 @@ Capabilities:
 import os
 import re
 import threading
+import time
 import uuid
 from pathlib import Path
 from typing import Optional
@@ -54,6 +55,7 @@ BACKEND_AGENT_URL = os.getenv("BACKEND_AGENT_URL", "http://localhost:8002")
 COMEDIAN_AGENT_URL = os.getenv("COMEDIAN_AGENT_URL", "http://localhost:8003")
 CRITIC_AGENT_URL = os.getenv("CRITIC_AGENT_URL", "http://localhost:8004")
 EINO_AGENT_URL = os.getenv("EINO_AGENT_URL", "http://localhost:8005")
+AGENT_REGISTRY_URL = os.getenv("AGENT_REGISTRY_URL", "")
 FILE_SERVER_PORT = int(os.getenv("FILE_SERVER_PORT", "8080"))
 
 
@@ -64,6 +66,34 @@ def _start_file_server():
         daemon=True,
     )
     thread.start()
+
+
+def _fetch_registry_specs(registry_url: str) -> list[tuple[str, str, str]]:
+    """Fetch agent endpoints from the Agent Registry.
+
+    Returns a list of (name, url, description) tuples. Falls back to an empty
+    list if the registry is unreachable so the caller can use static env vars.
+    """
+    try:
+        response = requests.get(f"{registry_url.rstrip('/')}/agents", timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        specs = []
+        for agent in data.get("agents", []):
+            name = agent.get("name")
+            url = agent.get("url")
+            desc = agent.get("description", "")
+            if not name or not url:
+                continue
+            # Skip ourselves so we don't call our own A2A endpoint recursively.
+            if name == "main_agent":
+                continue
+            specs.append((name, url, desc))
+        print(f"[agent] loaded {len(specs)} agent specs from registry")
+        return specs
+    except Exception as e:
+        print(f"[agent] registry fetch failed ({registry_url}): {e}")
+        return []
 
 
 def _extract_url(text: str) -> Optional[str]:
@@ -157,6 +187,20 @@ def _call_a2a_agent(base_url: str, message: str) -> str:
     return _task_text(data.get("result", {}))
 
 
+def _resolve_frontend_url() -> str:
+    """Return the frontend agent URL, preferring registry over env var."""
+    if AGENT_REGISTRY_URL:
+        try:
+            response = requests.get(f"{AGENT_REGISTRY_URL.rstrip('/')}/agents/frontend_agent", timeout=5)
+            response.raise_for_status()
+            url = response.json().get("url")
+            if url:
+                return url
+        except Exception as e:
+            print(f"[agent] could not resolve frontend_agent from registry: {e}")
+    return FRONTEND_AGENT_URL
+
+
 def generate_frontend_project(request: str, tool_context: ToolContext) -> str:
     """Call the remote frontend A2A agent and return a local download URL.
 
@@ -165,14 +209,15 @@ def generate_frontend_project(request: str, tool_context: ToolContext) -> str:
     archive into our local file server so the user gets a stable local link.
     """
     session_id = getattr(tool_context.session, "id", str(uuid.uuid4()))
-    artifact_text = _call_a2a_agent(FRONTEND_AGENT_URL, request)
+    frontend_url = _resolve_frontend_url()
+    artifact_text = _call_a2a_agent(frontend_url, request)
     artifact_url = _extract_url(artifact_text)
     if not artifact_url:
         raise RuntimeError(f"Frontend agent did not return a download URL. Response: {artifact_text}")
 
     # Inside Docker, the frontend agent's "localhost" resolves to ourselves, not
     # to the frontend_agent container. Rewrite to the compose service name.
-    frontend_host = FRONTEND_AGENT_URL.replace("http://", "").replace("https://", "")
+    frontend_host = frontend_url.replace("http://", "").replace("https://", "")
     artifact_url = re.sub(r"https?://localhost(:\d+)?", f"http://{frontend_host}", artifact_url)
 
     save_dir = os.path.join(ARTIFACTS_DIR, session_id)
@@ -190,45 +235,50 @@ def get_current_time() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
-def _build_delegate_tools() -> list:
+def _build_delegate_tools(specs: Optional[list[tuple[str, str, str]]] = None) -> list:
     """Wrap each remote A2A sub-agent as an AgentTool (ADK native delegate mode).
 
     This is the orchestrator pattern: each sub-agent becomes a function tool whose
     description is the agent's own description. The main agent reads those
     descriptions and decides for itself which sub-agent to call (and in what
     order) based on who is best at the task — no hardcoded routing or pipeline.
-    Control always stays with the main agent: it calls a sub-agent, gets the
-    result back as a tool response, and continues reasoning (may call more).
+
+    If AGENT_REGISTRY_URL is set, specs are fetched from the registry first.
+    Otherwise (or on registry failure) the static env-var list is used.
 
     Card resolution is lazy, so a sub-agent server not up at import time won't
     crash; invoking it while down surfaces a clear error.
     """
-    specs = [
-        (
-            "backend_agent",
-            BACKEND_AGENT_URL,
-            "后端服务生成专家：用 FastAPI / Python 设计 REST 接口、数据模型、可运行的后端项目骨架。"
-            "遇到后端/服务端/接口 API 相关需求时调用本工具委派给它。",
-        ),
-        (
-            "comedian_agent",
-            COMEDIAN_AGENT_URL,
-            "一个讲笑话的子 Agent。给它一个主题，它会讲一个简短的中文笑话。"
-            "当需要有人讲笑话或创作幽默内容时调用本工具委派给它。",
-        ),
-        (
-            "critic_agent",
-            CRITIC_AGENT_URL,
-            "一个笑话评论员子 Agent。给它一段笑话，它会给出简短评价（好不好笑、打分、理由）。"
-            "当需要评价某个笑话时调用本工具委派给它。",
-        ),
-        (
-            "eino_agent",
-            EINO_AGENT_URL,
-            "基于 CloudWeGo Eino 框架的 Go Agent，能查询天气（get_weather 工具）。"
-            "遇到天气查询、气象信息相关需求时调用本工具委派给它。",
-        ),
-    ]
+    if specs is None:
+        if AGENT_REGISTRY_URL:
+            specs = _fetch_registry_specs(AGENT_REGISTRY_URL)
+        if not specs:
+            specs = [
+                (
+                    "backend_agent",
+                    BACKEND_AGENT_URL,
+                    "后端服务生成专家：用 FastAPI / Python 设计 REST 接口、数据模型、可运行的后端项目骨架。"
+                    "遇到后端/服务端/接口 API 相关需求时调用本工具委派给它。",
+                ),
+                (
+                    "comedian_agent",
+                    COMEDIAN_AGENT_URL,
+                    "一个讲笑话的子 Agent。给它一个主题，它会讲一个简短的中文笑话。"
+                    "当需要有人讲笑话或创作幽默内容时调用本工具委派给它。",
+                ),
+                (
+                    "critic_agent",
+                    CRITIC_AGENT_URL,
+                    "一个笑话评论员子 Agent。给它一段笑话，它会给出简短评价（好不好笑、打分、理由）。"
+                    "当需要评价某个笑话时调用本工具委派给它。",
+                ),
+                (
+                    "eino_agent",
+                    EINO_AGENT_URL,
+                    "基于 CloudWeGo Eino 框架的 Go Agent，能查询天气（get_weather 工具）。"
+                    "遇到天气查询、气象信息相关需求时调用本工具委派给它。",
+                ),
+            ]
 
     tools: list = []
     for name, base_url, desc in specs:
@@ -319,11 +369,18 @@ def _load_mcp_tools() -> list:
 _DELEGATE_TOOLS = _build_delegate_tools()
 _MCP_TOOLS = _load_mcp_tools()
 
-root_agent = Agent(
-    name="main_agent",
-    model=LiteLlm(model=f"openai/{MODEL_NAME}"),
-    description="面向用户的总调度 Agent（orchestrator），能聊天、调用工具，并把任务委派给各领域的专家子 Agent。",
-    instruction="""你是面向用户的总调度 Agent（orchestrator）。你直接和用户对话，并根据任务需要调度你的能力。
+# Global handle to the current root_agent. The registry poller may replace it
+# when new agents are discovered, so callers should use get_root_agent().
+root_agent: Optional[Agent] = None
+_CURRENT_AGENT: Optional[Agent] = None
+
+
+def _build_root_agent(delegate_tools: list) -> Agent:
+    return Agent(
+        name="main_agent",
+        model=LiteLlm(model=f"openai/{MODEL_NAME}"),
+        description="面向用户的总调度 Agent（orchestrator），能聊天、调用工具，并把任务委派给各领域的专家子 Agent。",
+        instruction="""你是面向用户的总调度 Agent（orchestrator）。你直接和用户对话，并根据任务需要调度你的能力。
 
 ## 调度原则（核心）
 
@@ -343,13 +400,62 @@ root_agent = Agent(
 - **如果子 Agent 调用失败、报错或返回空结果，必须如实告诉用户"该子 Agent 当前不可用或返回异常"，不要编造结果假装成功。**
 - 通用问题（闲聊、查时间等）直接回答即可，不必每次都调工具。
 """,
-    tools=[generate_frontend_project, get_current_time, *_DELEGATE_TOOLS, *_MCP_TOOLS],
-)
+        tools=[generate_frontend_project, get_current_time, *delegate_tools, *_MCP_TOOLS],
+    )
+
+
+def get_root_agent() -> Agent:
+    """Return the current root_agent (rebuilt dynamically when registry changes)."""
+    global _CURRENT_AGENT
+    if _CURRENT_AGENT is None:
+        _CURRENT_AGENT = root_agent
+    return _CURRENT_AGENT
+
+
+def _start_registry_poller(interval_seconds: int = 30):
+    """Background thread that refreshes delegate tools from the registry.
+
+    When the registry content changes, a new root_agent is built and published
+    via get_root_agent(). Running sessions keep using the old agent instance;
+    new sessions pick up the new tools without restarting the process.
+    """
+
+    def _poll():
+        global root_agent, _CURRENT_AGENT
+        last_spec_count = len(_DELEGATE_TOOLS)
+        while True:
+            time.sleep(interval_seconds)
+            try:
+                specs = _fetch_registry_specs(AGENT_REGISTRY_URL)
+                if not specs:
+                    continue
+                new_tools = _build_delegate_tools(specs)
+                if len(new_tools) != last_spec_count:
+                    root_agent = _build_root_agent(new_tools)
+                    _CURRENT_AGENT = root_agent
+                    last_spec_count = len(new_tools)
+                    print(
+                        f"[agent] root_agent rebuilt: now has {last_spec_count} delegate tools"
+                    )
+            except Exception as e:
+                print(f"[agent] registry poller error: {e}")
+
+    if AGENT_REGISTRY_URL:
+        thread = threading.Thread(target=_poll, daemon=True, name="registry-poller")
+        thread.start()
+        print(f"[agent] registry poller started ({AGENT_REGISTRY_URL}, interval={interval_seconds}s)")
+
+
+root_agent = _build_root_agent(_DELEGATE_TOOLS)
+_CURRENT_AGENT = root_agent
 
 # Start the static file server on import so it is available for `adk run` as well.
 # Skip when running under `adk web` (it has its own server) or docker compose.
 if not os.environ.get("ADK_WEB"):
     _start_file_server()
+
+# Start dynamic discovery from the registry if configured.
+_start_registry_poller()
 
 if __name__ == "__main__":
     print(f"File server started at http://localhost:{FILE_SERVER_PORT}")

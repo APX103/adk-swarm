@@ -1,4 +1,22 @@
 services:
+  agent_registry:
+    build:
+      context: .
+      dockerfile: agent_registry/Dockerfile
+    ports:
+      - "8006:8006"
+    environment:
+      - REGISTRY_HOST=0.0.0.0
+      - REGISTRY_PORT=8006
+      - REGISTRY_CONFIG_PATH=/app/endpoints.json
+    volumes:
+      - ./agent_registry/endpoints.json:/app/endpoints.json:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8006/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   frontend_agent:
     build: ./frontend_agent
     ports:
@@ -35,6 +53,7 @@ services:
       - COMEDIAN_AGENT_URL=http://comedian:8003
       - CRITIC_AGENT_URL=http://critic:8004
       - EINO_AGENT_URL=http://eino_agent:8005
+      - AGENT_REGISTRY_URL=http://agent_registry:8006
       - MCP_SERVERS=
       - FILE_SERVER_PORT=8080
       - MAIN_AGENT_A2A_PORT=8081
@@ -46,6 +65,8 @@ services:
       - main_agent_sessions:/app/data
     command: ["bash", "./main_agent/entrypoint.sh"]
     depends_on:
+      agent_registry:
+        condition: service_healthy
       frontend_agent:
         condition: service_healthy
       mock_agent:
@@ -131,6 +152,10 @@ services:
       - OPENAI_MODEL=${OPENAI_MODEL:-glm-4.5-air}
       - MAIN_AGENT_A2A_URL=http://main_agent:8081
       - COMEDIAN_AGENT_URL=http://comedian:8003
+      - AGENT_REGISTRY_URL=http://agent_registry:8006
+    depends_on:
+      agent_registry:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8005/.well-known/agent-card.json"]
       interval: 10s

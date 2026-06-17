@@ -29,6 +29,66 @@ func envOr(key, fallback string) string {
 }
 
 // =====================================================================
+// Agent Registry — dynamic endpoint discovery
+// =====================================================================
+
+type RegistryAgent struct {
+	Name        string `json:"name"`
+	URL         string `json:"url"`
+	Description string `json:"description"`
+	Type        string `json:"type"`
+}
+
+type RegistryResponse struct {
+	Agents []RegistryAgent `json:"agents"`
+}
+
+var registryCache = map[string]string{}
+var registryFetched bool
+
+func fetchRegistryAgents(registryURL string) map[string]string {
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(strings.TrimRight(registryURL, "/") + "/agents")
+	if err != nil {
+		log.Printf("[eino_agent] registry fetch failed: %v", err)
+		return nil
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("[eino_agent] registry returned %d", resp.StatusCode)
+		return nil
+	}
+	var r RegistryResponse
+	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
+		log.Printf("[eino_agent] registry decode failed: %v", err)
+		return nil
+	}
+	out := make(map[string]string, len(r.Agents))
+	for _, a := range r.Agents {
+		if a.Name != "" && a.URL != "" {
+			out[a.Name] = a.URL
+		}
+	}
+	log.Printf("[eino_agent] registry loaded %d agents", len(out))
+	return out
+}
+
+func getAgentURL(name, fallback string) string {
+	if !registryFetched {
+		if registryURL := os.Getenv("AGENT_REGISTRY_URL"); registryURL != "" {
+			if m := fetchRegistryAgents(registryURL); m != nil {
+				registryCache = m
+			}
+		}
+		registryFetched = true
+	}
+	if url, ok := registryCache[name]; ok {
+		return url
+	}
+	return envOr(name+"_URL", fallback)
+}
+
+// =====================================================================
 // Weather Tool
 // =====================================================================
 
@@ -188,7 +248,7 @@ type DelegateOutput struct {
 }
 
 func askMainAgent(_ context.Context, input *AskMainAgentInput) (*DelegateOutput, error) {
-	url := envOr("MAIN_AGENT_A2A_URL", "http://localhost:8081")
+	url := getAgentURL("main_agent", "http://localhost:8081")
 	log.Printf("[eino_agent] → 调用 main_agent: %s", truncate(input.Request, 100))
 	resp, err := callA2AAgent(url, input.Request)
 	if err != nil {
@@ -204,7 +264,7 @@ type AskComedianInput struct {
 }
 
 func askComedian(_ context.Context, input *AskComedianInput) (*DelegateOutput, error) {
-	url := envOr("COMEDIAN_AGENT_URL", "http://localhost:8003")
+	url := getAgentURL("comedian_agent", "http://localhost:8003")
 	log.Printf("[eino_agent] → 调用 comedian: %s", truncate(input.Request, 100))
 	resp, err := callA2AAgent(url, input.Request)
 	if err != nil {

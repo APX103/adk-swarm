@@ -33,9 +33,14 @@
 ```
 adk_swarm/
 ├── .env                          # 配置文件（需自行创建，已 gitignore）
-├── docker-compose.yml            # 前端 Agent 容器编排
+├── docker-compose.yml            # 全部服务编排
 ├── README.md                     # 项目总览
 ├── USAGE.md                      # 本文档
+├── agent_registry/               # Agent 注册中心（配置中心）
+│   ├── endpoints.json            # 所有 Agent 的 endpoints 配置
+│   ├── server.py                 # FastAPI 注册中心服务
+│   ├── Dockerfile
+│   └── README.md
 ├── frontend_agent/               # Node.js / ADK TypeScript 前端子 Agent
 │   ├── Dockerfile
 │   ├── package.json
@@ -47,9 +52,14 @@ adk_swarm/
 ├── demo_agents/                  # 两个 A2A 子 Agent，验证 orchestrator 路由
 │   ├── comedian_server.py        #   :8003 讲笑话专家
 │   └── critic_server.py          #   :8004 笑话评论员
+├── eino_agent/                   # Go + CloudWeGo Eino Agent
+│   ├── main.go
+│   ├── Dockerfile
+│   └── ...
 └── main_agent/                   # Python ADK 主 Agent（orchestrator）
     ├── cli.py                    # 交互式入口（session/思考/工具调用展示/压缩）
-    ├── agent.py                  # root agent，用 AgentTool 把 A2A 子 Agent 包成委派工具
+    ├── agent.py                  # root agent，从 Registry 动态加载委派工具
+    ├── a2a_server.py             # A2A 服务端点（被 eino_agent 等回调）
     ├── session.py                # 基于 SQLite 的 session 持久化
     ├── compression.py            # 上下文超长自动压缩（简单版）
     ├── file_server.py            # FastAPI 静态文件服务
@@ -79,6 +89,9 @@ CRITIC_AGENT_URL=http://localhost:8004     # 笑话评论 demo Agent
 # 主 Agent 文件服务端口
 FILE_SERVER_PORT=8080
 
+# Agent Registry 地址（动态发现所有子 Agent，无需重启 main_agent）
+AGENT_REGISTRY_URL=http://localhost:8006
+
 # 可选：MCP 工具（JSON 数组，留空则不加载）
 # MCP_SERVERS='[{"transport":"stdio","command":"npx","args":["-y","@modelcontextprotocol/server-filesystem","."]}]'
 ```
@@ -88,6 +101,9 @@ FILE_SERVER_PORT=8080
 > 架构说明：主 Agent 是 **orchestrator**。每个 A2A 子 Agent 在主 Agent 内被包成一个
 > 委派工具（`AgentTool`），其 `description` 成为工具描述。主 Agent 的 LLM 读这些描述，
 > **自主判断**该把任务派给谁、什么顺序，调用后拿回结果继续推理——不是流水线，不是写死的路由。
+>
+> 所有 Agent 的 endpoint 现在统一由 **Agent Registry** 管理。新增 Agent 时只需改
+> `agent_registry/endpoints.json`， orchestrator 会动态刷新工具列表，**无需重启业务 Agent**。
 
 ---
 
@@ -111,17 +127,19 @@ OPENAI_MODEL=glm-4.5-air
 docker compose up -d --build
 ```
 
-这将启动 5 个服务：
+这将启动 6 个服务：
 
 | 服务 | 容器名 | 端口 | 说明 |
 |------|--------|------|------|
+| agent_registry | adk_swarm-agent_registry-1 | 8006 | Agent 注册中心（endpoints 配置） |
 | frontend_agent | adk_swarm-frontend_agent-1 | 8001 | 前端项目生成 |
-| main_agent | adk_swarm-main_agent-1 | 8080 | 主 Orchestrator |
+| main_agent | adk_swarm-main_agent-1 | 8080 / 8081 | 主 Orchestrator / A2A 回调端点 |
 | mock_agent | adk_swarm-mock_agent-1 | 8002 | 后端 mock |
 | comedian | adk_swarm-comedian-1 | 8003 | 讲笑话 demo |
 | critic | adk_swarm-critic-1 | 8004 | 笑话评论 demo |
+| eino_agent | adk_swarm-eino_agent-1 | 8005 | Go 天气 / 双向调度 |
 
-Compose 内建 healthcheck 和 `depends_on`，主 Agent 会等前端 Agent 和 mock Agent 就绪后再启动。
+Compose 内建 healthcheck 和 `depends_on`，主 Agent 会等 registry 和其他子 Agent 就绪后再启动。
 
 ### 3. 确认所有服务健康
 
@@ -143,10 +161,12 @@ adk_swarm-critic-1           Up (healthy)
 也可以逐个验证 A2A Agent Card：
 
 ```bash
+curl -s http://localhost:8006/agents | python3 -c "import sys,json; print([a['name'] for a in json.load(sys.stdin)['agents']])"
 curl -s http://localhost:8001/.well-known/agent-card.json | python3 -c "import sys,json; print(json.load(sys.stdin)['name'])"
 curl -s http://localhost:8002/.well-known/agent-card.json | python3 -c "import sys,json; print(json.load(sys.stdin)['name'])"
 curl -s http://localhost:8003/.well-known/agent-card.json | python3 -c "import sys,json; print(json.load(sys.stdin)['name'])"
 curl -s http://localhost:8004/.well-known/agent-card.json | python3 -c "import sys,json; print(json.load(sys.stdin)['name'])"
+curl -s http://localhost:8005/.well-known/agent-card.json | python3 -c "import sys,json; print(json.load(sys.stdin)['name'])"
 ```
 
 ### 4. 进入主 Agent 交互式 CLI
@@ -171,6 +191,86 @@ docker compose logs -f
 docker compose logs -f frontend_agent
 docker compose logs -f main_agent
 ```
+
+---
+
+## 动态接入新 Agent（无需重启）
+
+本项目的核心是 **Agent Registry**（`agent_registry/`）。它不是一个复杂的分布式注册中心，而是一个极轻量的 HTTP 配置服务：只把 `agent_registry/endpoints.json` 里的 endpoints 暴露出来，供所有调度型 Agent 读取。
+
+### 为什么能做到“不重启加 Agent”
+
+- `main_agent` 启动后，会每 30 秒向 `AGENT_REGISTRY_URL/agents` 拉取一次 endpoints list。
+- 拉取到新配置后，自动用新的 Agent 描述重建自己的委派工具列表和 `root_agent`。
+- 新打开的 CLI session（或新 A2A 请求）会立即使用最新的工具列表。
+- `eino_agent` 在首次需要调用 `main_agent` / `comedian_agent` 时，也会先读 Registry，再决定调谁。
+
+所以新增 Agent 只需两步：
+
+1. 把新 Agent 的 endpoint 加到 `agent_registry/endpoints.json`。
+2. 调用 `POST /reload` 让 Registry 重新加载（因为 `endpoints.json` 是 volume 挂载的，改完即可重载）。
+
+```bash
+# 1. 编辑 agent_registry/endpoints.json，追加一个新 Agent
+# 2. 通知 Registry 重新加载
+curl -X POST http://localhost:8006/reload
+```
+
+约 30 秒内，`main_agent` 和 `eino_agent` 就会发现它。新 session 里直接可以说：
+
+```
+让 new_agent 帮我做 xxx
+```
+
+### 流程图
+
+```mermaid
+graph TD
+    subgraph "部署后的网络"
+        R[agent_registry:8006<br/>endpoints.json]
+        M[main_agent<br/>每30s拉取/agents]
+        E[eino_agent<br/>按需查/agents]
+        F[frontend_agent:8001]
+        B[backend_agent:8002]
+        C[comedian:8003]
+        X[新 Agent :8007]
+    end
+
+    U[用户] -->|自然语言请求| M
+    M -->|发现 & 调用| F
+    M -->|发现 & 调用| B
+    M -->|发现 & 调用| C
+    M -.->|动态发现后调用| X
+    E -->|查询目标地址| R
+    E -->|回调| M
+    M -->|拉取 endpoints| R
+
+    style R fill:#1e3a5f,stroke:#3b82f6,color:#fff
+    style X fill:#0e4f3b,stroke:#34d399,color:#fff
+```
+
+### endpoints.json 配置示例
+
+```json
+{
+  "agents": [
+    {
+      "name": "frontend_agent",
+      "url": "http://frontend_agent:8001",
+      "description": "前端项目生成专家...",
+      "type": "specialist"
+    },
+    {
+      "name": "new_orchestrator",
+      "url": "http://new_orchestrator:8007",
+      "description": "一个二级调度 Agent，擅长把复杂任务拆给多个专家。",
+      "type": "orchestrator"
+    }
+  ]
+}
+```
+
+> **注意**：`type` 字段目前只是标注，不影响路由。真正影响 main_agent 调度的是 `description` —— LLM 通过描述判断这个 Agent 适合什么任务。
 
 ---
 
@@ -394,6 +494,133 @@ uv pip install fastapi uvicorn[standard] python-dotenv requests
 
 ---
 
+## Kubernetes 部署清单
+
+把 `docker-compose.yml` 这套服务搬到 K8s 时，最小需要部署的资源如下：
+
+| 组件 | K8s 资源 | 说明 |
+|---|---|---|
+| agent_registry | Deployment + Service | 注册中心，建议 1 副本即可 |
+| main_agent | Deployment + Service | 2 个端口：8080（web/CLI）、8081（A2A） |
+| frontend_agent | Deployment + Service | Node/TypeScript |
+| mock_agent | Deployment + Service | Python 后端 mock |
+| comedian / critic | Deployment + Service | Demo 子 Agent |
+| eino_agent | Deployment + Service | Go Agent |
+| 新 Agent | Deployment + Service | 热插拔，无需改 main_agent |
+| 共享配置 | ConfigMap + Secret | 模型地址、API Key、Registry URL |
+| 持久化 | PVC | sessions、artifacts |
+| Ingress（可选） | Ingress / Gateway | 对外暴露 main_agent 8080 |
+
+### 关键配置原则
+
+1. **所有 Pod 都要能访问 agent_registry Service**
+   - 环境变量：`AGENT_REGISTRY_URL=http://agent-registry:8006`
+   - 内部 DNS 用 K8s Service 名，不要用 `localhost`。
+
+2. **新增 Agent 时只需做 3 件事**
+   - 写新的 Deployment + Service。
+   - 更新 `agent_registry` 的 ConfigMap（即 `endpoints.json`）。
+   - 调用 `POST http://agent-registry:8006/reload`。
+   - `main_agent` 和 `eino_agent` 会在下次拉取时发现新 Agent，**无需滚动重启业务 Deployment**。
+
+3. **健康检查**
+   - 所有 A2A Agent 暴露 `/.well-known/agent-card.json`。
+   - Registry 暴露 `/health`。
+   - K8s `livenessProbe` / `readinessProbe` 可以直接用这两个端点。
+
+### 简易 K8s 示例（agent_registry）
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-registry
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agent-registry
+  template:
+    metadata:
+      labels:
+        app: agent-registry
+    spec:
+      containers:
+        - name: registry
+          image: your-registry/adk_swarm:agent_registry
+          ports:
+            - containerPort: 8006
+          envFrom:
+            - secretRef:
+                name: adk-secrets
+          volumeMounts:
+            - name: endpoints
+              mountPath: /app/endpoints.json
+              subPath: endpoints.json
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8006
+      volumes:
+        - name: endpoints
+          configMap:
+            name: agent-registry-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-registry
+spec:
+  selector:
+    app: agent-registry
+  ports:
+    - port: 8006
+      targetPort: 8006
+```
+
+ConfigMap 里放 `endpoints.json` 内容。更新 ConfigMap 后调用 `/reload`，调度者即感知。
+
+---
+
+## 调试与 Trace
+
+### 当前状态
+
+- `main_agent` 自带最完整的调试界面：CLI 实时打印 💭 思考、🔧 工具调用、↩️ 返回。
+- `eino_agent` 自带 Dev Web UI：`http://localhost:8005/ui`。
+- 其他子 Agent 主要通过 `docker compose logs -f <service>` 查看 stdout 日志。
+
+### 推荐的最小可观测性方案（K8s）
+
+因为各 Agent 是独立进程，**跨 Agent 调用链需要统一的日志 + trace**：
+
+| 层级 | 组件 | 用途 |
+|---|---|---|
+| 日志收集 | Fluent Bit / Fluentd | 把所有 Pod 的 stdout 日志打到后端 |
+| 日志存储/查询 | Loki 或 ELK | 按 `session_id` / `trace_id` 关联 |
+| 可视化 | Grafana | 查日志、看调用链 |
+| 分布式 Trace（可选） | OpenTelemetry Collector + Jaeger/Tempo | 跟踪 `main_agent -> eino_agent -> main_agent` 这类跨 Agent 调用 |
+
+### 最简单的调试姿势（Compose 环境）
+
+```bash
+# 1. 看 Registry 当前有哪些 Agent
+curl -s http://localhost:8006/agents | python3 -m json.tool
+
+# 2. 看 main_agent 有没有动态刷新到新 Agent
+docker compose logs -f main_agent | grep "registry\|delegate tools"
+
+# 3. 看 eino_agent 调用链
+docker compose logs -f eino_agent
+
+# 4. 直接进 main_agent CLI 手动触发
+docker compose exec main_agent python cli.py
+```
+
+> **Trace 说明**：当前代码主要靠日志输出进行调试。如果后续需要完整的分布式 trace，建议给每个 A2A 调用注入 OpenTelemetry span，并通过 HTTP header 传递 `traceparent`，在 Grafana/Jaeger 中查看整条链路。
+
+---
+
 ## 关闭与清理
 
 ### 停止所有服务
@@ -428,7 +655,8 @@ cd main_agent && rm -rf .venv
 
 ## 下一步建议
 
-- 接入更多子 Agent（后端、数据库、测试等）。
+- 接入更多子 Agent（后端、数据库、测试、代码审查等）——只需改 `agent_registry/endpoints.json`。
+- 为 Agent Registry 增加写接口或 GitOps 同步，实现配置变更自动生效。
 - 为主 Agent 增加任务级日志与审计记录。
-- 将主 Agent 也容器化，统一通过 `docker compose` 管理。
+- 接入 OpenTelemetry，实现跨 Agent 的分布式 trace。
 - 增加工作流模板，支持“生成前端 + 生成后端 + 联调”等组合任务。

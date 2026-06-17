@@ -9,10 +9,11 @@ OPENAI_BASE_URL=https://open.bigmodel.cn/api/coding/paas/v4
 OPENAI_API_KEY=你的API_KEY
 OPENAI_MODEL=glm-4.5-air
 FRONTEND_AGENT_URL=http://localhost:8001
+AGENT_REGISTRY_URL=http://localhost:8006
 FILE_SERVER_PORT=8080
 ```
 
-## 2. 启动前端 Agent
+## 2. 启动全部服务
 
 ```bash
 cd frontend_agent
@@ -20,6 +21,8 @@ npm install && npm run build
 cd ..
 docker compose up -d --build
 ```
+
+这会启动包括 Agent Registry 在内的所有服务。
 
 ## 3. 启动主 Agent
 

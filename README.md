@@ -7,7 +7,7 @@
 ```
                          ┌──────────────────────────────┐
    用户 ──CLI 对话──▶    │   Main Agent (orchestrator)   │
-                         │   读子 Agent 的 description    │
+                         │   从 Registry 读取子 Agent    │
                          │   自己判断派给谁、什么顺序     │
                          │   调用后拿回结果，控制权不交出 │
                          └──────────┬───────────────────┘
@@ -18,6 +18,10 @@
             │              └─── 均为 RemoteA2aAgent，用 AgentTool 包成委派工具 ──┘
             ▼
    Frontend Agent (Node, :8001, Docker) ──产物──▶ File Server :8080
+
+   eino_agent (:8005)  ──────双向 A2A──────▶  main_agent :8081
+
+   agent_registry (:8006)  ◄─── 所有 orchestrator 从这里读取 endpoints
 ```
 
 **为什么是这种架构（不是别的）：**
@@ -34,17 +38,20 @@ ADK 有三种多 Agent 模式，本平台用的是 **AgentTool delegate（模式
 
 ## 组件
 
-- **Main Agent** (`main_agent/`)：orchestrator。
+- **Main Agent** (`main_agent/`)：总调度 orchestrator。
   - `cli.py`：**交互式入口**（主要使用方式），含 session 管理、思考/工具调用展示、自动上下文压缩。
-  - `agent.py`：root agent，把 A2A 子 Agent 包成 AgentTool delegate 工具。
+  - `agent.py`：root agent，从 Agent Registry 动态加载 A2A 子 Agent 并包成 AgentTool delegate 工具。
+  - `a2a_server.py`：A2A 服务端点（:8081），被 eino_agent 等外部 Agent 回调。
   - `session.py`：基于 SQLite 的持久化 session（可恢复对话）。
   - `compression.py`：上下文超长时自动摘要压缩（简单版）。
   - `test_orchestration.py`：orchestrator 多步委派验证（笑话链）。
+- **Agent Registry** (`agent_registry/`)：轻量 HTTP 配置中心，集中管理所有 Agent 的 endpoints。新增 Agent 只需改 `endpoints.json` + `/reload`。
 - **Frontend Agent** (`frontend_agent/`)：Node.js/ADK（Docker），生成可运行的 Vite + React 项目。
-- **Mock Backend Agent** (`mock_agent/`)：A2A 后端生成器（:8002），联调用，等真实 Agent 暴露 A2A 后换掉。
+- **Mock Backend Agent** (`mock_agent/`)：A2A 后端生成器（:8002），联调用。
 - **Demo Agents** (`demo_agents/`)：两个 A2A 子 Agent，用来验证 orchestrator 路由：
   - `comedian_server.py`（:8003）：讲笑话专家。
   - `critic_server.py`（:8004）：笑话评论员。
+- **Eino Agent** (`eino_agent/`)：Go + CloudWeGo Eino Agent（:8005），支持天气查询和双向 A2A 调度。
 - **File Service** (`main_agent/file_server.py`)：FastAPI 静态服务，:8080 提供产物下载。
 
 ## 前置要求
@@ -65,6 +72,8 @@ FRONTEND_AGENT_URL=http://localhost:8001
 BACKEND_AGENT_URL=http://localhost:8002
 COMEDIAN_AGENT_URL=http://localhost:8003
 CRITIC_AGENT_URL=http://localhost:8004
+EINO_AGENT_URL=http://localhost:8005
+AGENT_REGISTRY_URL=http://localhost:8006
 FILE_SERVER_PORT=8080
 # 可选：接入 MCP 工具（JSON 数组）
 # MCP_SERVERS='[{"transport":"stdio","command":"npx","args":["-y","@modelcontextprotocol/server-filesystem","."]}]'
@@ -117,7 +126,20 @@ cd main_agent && python test_orchestration.py
 
 ## 接入真实第三方 Agent（把 mock/demo 换掉）
 
-只要第三方 Agent 暴露 A2A 端点（agent card + `message/send`），在 `.env` 里把对应 `*_AGENT_URL` 指过去即可，再在 `agent.py` 的 `_build_delegate_tools` 加一行 spec（name + url + description）。Main 侧无需改路由逻辑——它会读新的 description 自己判断。
+只要第三方 Agent 暴露 A2A 端点（agent card + `message/send`），在 `agent_registry/endpoints.json` 里加一行：
+
+```json
+{
+  "name": "third_party_agent",
+  "url": "http://third_party_agent:8007",
+  "description": "它擅长做什么...",
+  "type": "specialist"
+}
+```
+
+然后调用 `curl -X POST http://localhost:8006/reload`。Main Agent 会在下次轮询时自动发现它，无需改代码、无需重启。
+
+本地开发时如果没有 Registry，也可以直接在 `.env` 里设置 `*_AGENT_URL` 并改 `agent.py` 的 `_build_delegate_tools`（静态方式）。
 
 ## Project Layout
 
@@ -125,14 +147,20 @@ cd main_agent && python test_orchestration.py
 .
 ├── docker-compose.yml
 ├── .env
+├── agent_registry/             # Agent 注册中心 (:8006)
+│   ├── endpoints.json          # 所有 Agent endpoints 配置
+│   ├── server.py
+│   └── Dockerfile
 ├── frontend_agent/             # Node/ADK TS 前端子 Agent (Docker, :8001)
 ├── mock_agent/                 # Python mock 后端子 Agent (A2A, :8002)
 ├── demo_agents/                # 两个 A2A 子 Agent，验证 orchestrator 路由
 │   ├── comedian_server.py      #   :8003 讲笑话
 │   └── critic_server.py        #   :8004 笑话评价
-└── main_agent/                 # Python ADK 主 Agent (orchestrator)
+├── eino_agent/                 # Go + CloudWeGo Eino Agent (:8005)
+└── main_agent/                 # Python ADK 主 Agent (orchestrator, :8080/:8081)
     ├── cli.py                  # 交互式入口
-    ├── agent.py                # root agent + AgentTool delegate 子 Agent
+    ├── agent.py                # root agent + 动态 Registry 加载
+    ├── a2a_server.py           # A2A 服务端点
     ├── session.py              # session 持久化
     ├── compression.py          # 上下文压缩
     ├── file_server.py

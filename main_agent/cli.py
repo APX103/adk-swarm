@@ -31,10 +31,10 @@ from google.adk.runners import Runner
 from google.genai import types
 
 try:
-    from agent import MODEL_NAME, root_agent
+    from agent import MODEL_NAME, get_root_agent
     from compression import DEFAULT_MAX_TOKENS, compress_events, history_tokens
 except ImportError:
-    from main_agent.agent import MODEL_NAME, root_agent
+    from main_agent.agent import MODEL_NAME, get_root_agent
     from main_agent.compression import DEFAULT_MAX_TOKENS, compress_events, history_tokens
 
 
@@ -235,7 +235,7 @@ async def main(start_session_id: str | None = None):
 
     runner = Runner(
         app_name=APP_NAME,
-        agent=root_agent,
+        agent=get_root_agent(),
         session_service=service,
     )
 

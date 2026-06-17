@@ -23,29 +23,40 @@ python cli.py                          # 新 session
 
 ## 完整启动（含子 Agent 调度演示）
 
-每个终端跑一个服务，最后跑 CLI：
+每个终端跑一个服务，最后跑 CLI。如果直接用 Docker Compose，则 Registry 和所有子 Agent 都已编排好：
 
 ```bash
-# 终端 1：讲笑话子 Agent
+# 方式 A：Docker Compose 一键启动（推荐）
+cd /Users/lijialun/work/adk_swarm
+docker compose up -d --build
+
+# 方式 B：手动逐个启动
+# 终端 1：Agent Registry
+cd /Users/lijialun/work/adk_swarm/agent_registry
+source ../main_agent/.venv/bin/activate
+python server.py
+
+# 终端 2：讲笑话子 Agent
 cd /Users/lijialun/work/adk_swarm/demo_agents
 source ../main_agent/.venv/bin/activate
 python comedian_server.py
 
-# 终端 2：笑话评论子 Agent
+# 终端 3：笑话评论子 Agent
 cd /Users/lijialun/work/adk_swarm/demo_agents
 source ../main_agent/.venv/bin/activate
 python critic_server.py
 
-# 终端 3：后端生成 mock 子 Agent
+# 终端 4：后端生成 mock 子 Agent
 cd /Users/lijialun/work/adk_swarm/mock_agent
 source ../main_agent/.venv/bin/activate
 python server.py
 
-# 终端 4：前端子 Agent（可选，需要 Docker）
-cd /Users/lijialun/work/adk_swarm
-docker compose up -d --build
+# 终端 5：前端子 Agent（可选，需要 Docker）
+cd /Users/lijialun/work/adk_swarm/frontend_agent
+npm install && npm run build && cd ..
+docker compose up -d --build frontend_agent
 
-# 终端 5：主 Agent CLI
+# 终端 6：主 Agent CLI
 cd /Users/lijialun/work/adk_swarm/main_agent
 source .venv/bin/activate
 python cli.py
@@ -86,8 +97,9 @@ python cli.py
 ## 前提
 
 - `.env` 在项目根目录，里面有 `OPENAI_API_KEY` 和 `OPENAI_BASE_URL`（已配好）
+- `AGENT_REGISTRY_URL` 已配置（手动启动时默认 `http://localhost:8006`）
 - `MCP_SERVERS` 已配好天气查询工具（已配好）
-- 子 Agent 没起也没关系——CLI 照常启动，只是调到那个子 Agent 时会报连不上
+- 子 Agent 没起也没关系——CLI 照常启动，只是调到那个子 Agent 时会报连不上。如果使用 Registry，未注册的 Agent 对 main_agent 不可见。
 
 ## 故障排查
 
