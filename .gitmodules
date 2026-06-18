@@ -1,0 +1,3 @@
+[submodule "vendor/a2a-registry"]
+	path = vendor/a2a-registry
+	url = https://github.com/APX103/a2a-registry.git

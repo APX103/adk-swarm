@@ -1,8 +1,7 @@
 services:
   agent_registry:
     build:
-      context: .
-      dockerfile: agent_registry/Dockerfile
+      context: ./vendor/a2a-registry
     ports:
       - "8006:8006"
     environment:
