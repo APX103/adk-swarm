@@ -15,6 +15,8 @@ def register_self(name: str, service_name: str, port: int, description: str, age
     registry_url = os.getenv("AGENT_REGISTRY_URL", "")
     if not registry_url:
         return
+    client_key = os.getenv("REGISTRY_CLIENT_KEY", "")
+    headers = {"X-Registry-Key": client_key} if client_key else None
     own_url = f"http://{service_name}:{port}"
     payload = {
         "name": name,
@@ -23,7 +25,7 @@ def register_self(name: str, service_name: str, port: int, description: str, age
         "type": agent_type,
     }
     try:
-        resp = requests.post(f"{registry_url.rstrip('/')}/agents", json=payload, timeout=10)
+        resp = requests.post(f"{registry_url.rstrip('/')}/agents", json=payload, timeout=10, headers=headers)
         if resp.status_code == 201:
             print(f"[{name}] registered self @ {own_url}")
         elif resp.status_code == 409:

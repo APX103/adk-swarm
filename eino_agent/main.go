@@ -13,6 +13,7 @@ import (
 	"time"
 
 	mcpclient "github.com/mark3labs/mcp-go/client"
+	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/cloudwego/eino-ext/components/model/openai"
@@ -46,8 +47,10 @@ func envOr(key, fallback string) string {
 
 // RegistryClient wraps an MCP SSE connection to the agent registry.
 type RegistryClient struct {
-	sseURL string
-	cli    *mcpclient.Client
+	sseURL   string
+	cli      *mcpclient.Client
+	callerID string
+	callerKey string
 }
 
 // AgentEntry is one agent in the registry's list_agents result.
@@ -61,9 +64,15 @@ type AgentEntry struct {
 // NewRegistryClient connects to the registry's MCP SSE endpoint and initializes
 // the session. Returns error if the registry is unreachable; callers should
 // treat this as non-fatal (the agent can still run, just without discovery).
-func NewRegistryClient(ctx context.Context, registryURL string) (*RegistryClient, error) {
+func NewRegistryClient(ctx context.Context, registryURL, callerID, callerKey string) (*RegistryClient, error) {
 	sseURL := strings.TrimRight(registryURL, "/") + "/sse"
-	cli, err := mcpclient.NewSSEMCPClient(sseURL)
+	opts := []transport.ClientOption{}
+	if callerKey != "" {
+		opts = append(opts, mcpclient.WithHeaders(map[string]string{
+			"X-Registry-Key": callerKey,
+		}))
+	}
+	cli, err := mcpclient.NewSSEMCPClient(sseURL, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("create SSE client: %w", err)
 	}
@@ -78,7 +87,7 @@ func NewRegistryClient(ctx context.Context, registryURL string) (*RegistryClient
 		return nil, fmt.Errorf("initialize MCP session: %w", err)
 	}
 	log.Printf("[eino_agent] connected to registry MCP at %s", sseURL)
-	return &RegistryClient{sseURL: sseURL, cli: cli}, nil
+	return &RegistryClient{sseURL: sseURL, cli: cli, callerID: callerID, callerKey: callerKey}, nil
 }
 
 // Close releases the MCP session.
@@ -94,10 +103,12 @@ func (rc *RegistryClient) RegisterSelf(ctx context.Context, name, url, descripti
 	req := mcp.CallToolRequest{}
 	req.Params.Name = "register_agent"
 	req.Params.Arguments = map[string]any{
-		"name":        name,
-		"url":         url,
-		"description": description,
-		"type":        agentType,
+		"caller_id":    rc.callerID,
+		"caller_key":   rc.callerKey,
+		"name":         name,
+		"url":          url,
+		"description":  description,
+		"type":         agentType,
 	}
 	_, err := rc.cli.CallTool(ctx, req)
 	if err != nil {
@@ -111,6 +122,10 @@ func (rc *RegistryClient) RegisterSelf(ctx context.Context, name, url, descripti
 func (rc *RegistryClient) ListAgents(ctx context.Context, selfName string) []AgentEntry {
 	req := mcp.CallToolRequest{}
 	req.Params.Name = "list_agents"
+	req.Params.Arguments = map[string]any{
+		"caller_id":  rc.callerID,
+		"caller_key": rc.callerKey,
+	}
 	res, err := rc.cli.CallTool(ctx, req)
 	if err != nil {
 		log.Printf("[eino_agent] list_agents failed: %v", err)
@@ -901,8 +916,9 @@ func main() {
 	// Connect to the registry via MCP (self-register + discover peers).
 	var registry *RegistryClient
 	var peers []AgentEntry
+	callerKey := envOr("REGISTRY_CLIENT_KEY", "")
 	if registryURL != "" {
-		rc, rerr := NewRegistryClient(ctx, registryURL)
+		rc, rerr := NewRegistryClient(ctx, registryURL, selfName, callerKey)
 		if rerr != nil {
 			log.Printf("[eino_agent] registry MCP connect failed (non-fatal, running standalone): %v", rerr)
 		} else {

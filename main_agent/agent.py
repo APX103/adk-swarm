@@ -56,6 +56,8 @@ COMEDIAN_AGENT_URL = os.getenv("COMEDIAN_AGENT_URL", "http://localhost:8003")
 CRITIC_AGENT_URL = os.getenv("CRITIC_AGENT_URL", "http://localhost:8004")
 EINO_AGENT_URL = os.getenv("EINO_AGENT_URL", "http://localhost:8005")
 AGENT_REGISTRY_URL = os.getenv("AGENT_REGISTRY_URL", "")
+REGISTRY_CLIENT_KEY = os.getenv("REGISTRY_CLIENT_KEY", "")
+_REGISTRY_HEADERS = {"X-Registry-Key": REGISTRY_CLIENT_KEY} if REGISTRY_CLIENT_KEY else {}
 FILE_SERVER_PORT = int(os.getenv("FILE_SERVER_PORT", "8080"))
 
 
@@ -75,7 +77,7 @@ def _fetch_registry_specs(registry_url: str) -> list[tuple[str, str, str]]:
     list if the registry is unreachable so the caller can use static env vars.
     """
     try:
-        response = requests.get(f"{registry_url.rstrip('/')}/agents", timeout=10)
+        response = requests.get(f"{registry_url.rstrip('/')}/agents", timeout=10, headers=_REGISTRY_HEADERS)
         response.raise_for_status()
         data = response.json()
         specs = []
@@ -122,7 +124,7 @@ def _register_self(registry_url: str) -> None:
     }
     try:
         response = requests.post(
-            f"{registry_url.rstrip('/')}/agents", json=payload, timeout=10
+            f"{registry_url.rstrip('/')}/agents", json=payload, timeout=10, headers=_REGISTRY_HEADERS
         )
         if response.status_code == 201:
             print(f"[agent] registered self as main_agent @ {own_url}")
@@ -233,7 +235,7 @@ def _resolve_frontend_url() -> str:
     """Return the frontend agent URL, preferring registry over env var."""
     if AGENT_REGISTRY_URL:
         try:
-            response = requests.get(f"{AGENT_REGISTRY_URL.rstrip('/')}/agents/frontend_agent", timeout=5)
+            response = requests.get(f"{AGENT_REGISTRY_URL.rstrip('/')}/agents/frontend_agent", timeout=5, headers=_REGISTRY_HEADERS)
             response.raise_for_status()
             url = response.json().get("url")
             if url:
