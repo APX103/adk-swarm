@@ -24,22 +24,24 @@
 
 ## 架构概览
 
-```
-你的 Agent                 Registry（通讯录）           集群里的其他 Agent
-    │                          │                            │
-    │  ① 注册自己（POST /agents）│                            │
-    │  带 X-Registry-Key ──────►│  存你的 name+url+desc      │
-    │                          │  探活你的 /.well-known/     │
-    │                          │  agent-card.json            │
-    │                          │                            │
-    │  ② 发现别人（GET /agents） │                            │
-    │  带 X-Registry-Key ──────►│  返回健康+可见的 agent 列表  │
-    │  ◄─── [{name, url, ...}──│                            │
-    │                          │                            │
-    │  ③ 直接调用别人（A2A P2P） │                            │
-    │  POST {url} message/send ════════════════════════════►│
-    │  ◄═════════ 回复 ═════════════════════════════════════│
-    │  （Registry 不参与这一步）  │                            │
+```mermaid
+sequenceDiagram
+    participant A as 你的 Agent
+    participant R as Registry<br/>(通讯录)
+    participant B as 集群里的其他 Agent
+
+    Note over A,R: ① 注册自己
+    A->>R: POST /agents<br/>X-Registry-Key: 你的token<br/>{name, url, description}
+    Note over R: 存你的 name+url+desc<br/>探活你的 /.well-known/agent-card.json
+
+    Note over A,R: ② 发现别人
+    A->>R: GET /agents<br/>X-Registry-Key: 你的token
+    R-->>A: [{name, url, description}, ...]<br/>(健康 + 你有权看到的)
+
+    Note over A,B: ③ 直接调用别人（P2P，不经过 Registry）
+    A->>B: POST {url}/<br/>message/send<br/>(不带鉴权)
+    B-->>A: 回复
+    Note over A,B: Registry 不参与这一步
 ```
 
 **关键理解**：

@@ -26,47 +26,36 @@
 
 这是最核心的状态机——Registry 每 60 秒自动运转，**无需人工介入**。
 
-```
-                           POST /agents
-                         （Agent 自注册 / admin 注册）
-                               │
-                               ▼
-                    ┌─────────────────────┐
-                    │    REGISTERED        │
-                    │    last_ok = True    │  ← 乐观标记（注册时假设通）
-                    │    failures = 0      │
-                    └──────────┬──────────┘
-                               │
-                     探活（每 60s）
-                     GET {url}/.well-known/agent-card.json
-                               │
-              ┌────────────────┼────────────────┐
-              │                                 │
-          200 OK                          非200 / 超时
-              │                                 │
-              ▼                                 ▼
-    ┌─────────────────┐               ┌─────────────────┐
-    │    HEALTHY       │               │   UNHEALTHY      │
-    │    last_ok=True  │               │   last_ok=False  │
-    │    failures=0    │◄─────恢复────│   failures += 1  │
-    └────────┬────────┘               └────────┬────────┘
-             │                                 │
-             │  GET /agents / list_agents       │  GET /agents
-             │  → ✅ 对调用方可见                │  → ❌ 不可见（被过滤）
-             │                                 │
-             │  GET /agents/{name}              │  GET /agents/{name}
-             │  → ✅ 返回数据                    │  → ❌ 404
-             │                                 │
-             │                                 │  Agent 恢复后
-             │                                 │  下次探活 200 OK
-             │                                 └──────► HEALTHY
-             │
-             │  管理员 DELETE /agents/{name}
-             ▼
-    ┌─────────────────┐
-    │    DELETED        │  ← 记录从 DB 移除
-    │    （不存在）      │     下次探活不再管它
-    └─────────────────┘
+```mermaid
+stateDiagram-v2
+    [*] --> REGISTERED : POST /agents<br/>(Agent 自注册 / admin 注册)
+
+    REGISTERED --> HEALTHY : 探活 200 OK<br/>name 匹配
+    REGISTERED --> UNHEALTHY : 探活失败 / 超时
+
+    HEALTHY --> UNHEALTHY : 探活失败
+    UNHEALTHY --> HEALTHY : 探活恢复 200 OK
+
+    HEALTHY --> DELETED : 管理员 DELETE /agents/{name}
+    UNHEALTHY --> DELETED : 管理员 DELETE /agents/{name}
+
+    DELETED --> [*]
+
+    note right of REGISTERED
+        last_ok = True (乐观)
+        failures = 0
+    end note
+
+    note right of HEALTHY
+        GET /agents → ✅ 可见
+        GET /agents/{name} → ✅ 返回
+    end note
+
+    note right of UNHEALTHY
+        GET /agents → ❌ 被过滤
+        GET /agents/{name} → ❌ 404
+        记录仍在 DB，不删除
+    end note
 ```
 
 ### 关键规则
@@ -171,52 +160,47 @@ Agent 代码处理：忽略 409，正常继续
 
 ## 五、完整生命周期时间线
 
-```
-时间 ──────────────────────────────────────────────────────────────►
+```mermaid
+sequenceDiagram
+    participant A as Agent
+    participant R as Registry
+    participant C as 调用方 (main_agent)
 
-Agent 侧                    Registry 侧                    调用方（main_agent）
-─────────                   ──────────                    ──────────────────
+    Note over A: Agent 启动
+    A->>R: POST /agents {name,url,desc}
+    Note over R: INSERT 记录<br/>last_ok=True (乐观)
 
-[Agent 启动]
-    │
-    │ POST /agents ──────► [INSERT 记录]
-    │ {name,url,desc}      last_ok=True
-    │ ◄── 201 ──────────   (乐观)
-    │
-    │                      [探活 #1, 60s]
-    │ ◄── GET card ────    │
-    │ ──► 200 + card ──►   │ 解析 → HEALTHY
-    │                      │
-    │                      │ GET /agents ──────────────► [看到该 agent]
-    │                      │ ◄────────────────────────    构建 delegate tool
-    │                      │
-    │                      │ （正常运行中）
-    │                      │
-    │ ◄── GET card ────    │ [探活 #N]
-    │ ✗ 超时/非200 ──►     │ → UNHEALTHY
-    │  (Agent 挂了)         │ failures += 1
-    │                      │
-    │                      │ GET /agents ──────────────► [看不到该 agent 了]
-    │                      │ ◄────────────────────────    poller 重建 root_agent
-    │                      │                               （去掉失效 tool）
-    │                      │
-    │ [Agent 恢复]          │
-    │                      │ [探活 #N+1]
-    │ ◄── GET card ────    │
-    │ ──► 200 + card ──►   │ → HEALTHY（自动恢复）
-    │                      │
-    │                      │ GET /agents ──────────────► [又能看到了]
-    │                      │ ◄────────────────────────    poller 重建 root_agent
-    │                      │                               （加回 tool）
-    │                      │
-    │                      │
-[Agent 下线/改名]           │
-    │                      │
-    │ DELETE /agents/{name}│ [管理员手动删除]
-    │ ──────────────────►  │ 记录从 DB 移除
-    │                      │
-    │                      │ GET /agents ──────────────► [永久消失]
-    │                      │
+    Note over R: 探活 #1 (60s)
+    R->>A: GET /.well-known/agent-card.json
+    A-->>R: 200 + card
+    Note over R: HEALTHY
+
+    C->>R: GET /agents
+    R-->>C: 看到该 agent → 构建 delegate tool
+
+    Note over A: Agent 挂了
+    Note over R: 探活 #N
+    R->>A: GET card
+    Note over R: 超时 → UNHEALTHY
+
+    C->>R: GET /agents
+    Note over C: 看不到该 agent<br/>poller 重建（去掉失效 tool）
+
+    Note over A: Agent 恢复
+    Note over R: 探活 #N+1
+    R->>A: GET card
+    A-->>R: 200 + card
+    Note over R: HEALTHY（自动恢复）
+
+    C->>R: GET /agents
+    Note over C: 又能看到了<br/>poller 重建（加回 tool）
+
+    Note over A: Agent 下线/改名
+    A->>R: DELETE /agents/{name} (管理员)
+    Note over R: 记录从 DB 移除
+
+    C->>R: GET /agents
+    Note over C: 永久消失
 ```
 
 ---
@@ -225,73 +209,51 @@ Agent 侧                    Registry 侧                    调用方（main_ag
 
 Caller（调用方）的生命周期独立于 Agent：
 
-```
-┌──────────────────────────────────────────────────────────┐
-│                                                          │
-│  Caller 身份的创建：                                      │
-│                                                          │
-│  方式 1：.env 预置                                        │
-│    REGISTRY_CALLER_SEEDS=main_agent:token1,eino:token2  │
-│    → Registry 启动时读 seed，插入 callers 表              │
-│    → 幂等（已存在的不覆盖）                                │
-│                                                          │
-│  方式 2：管理员运行时添加                                  │
-│    POST /callers {client_id, key, is_admin}             │
-│    → 需要 admin token                                     │
-│    → 立即生效，无需重启                                    │
-│                                                          │
-│  Caller 身份的删除：                                      │
-│    DELETE /callers/{client_id}                           │
-│    → 需要 admin token                                     │
-│    → 立即失效：该 token 下次请求 → 401                    │
-│                                                          │
-├──────────────────────────────────────────────────────────┤
-│                                                          │
-│  Caller 请求时的鉴权流程：                                 │
-│                                                          │
-│  REST（main_agent 等）：                                  │
-│    X-Registry-Key: <token>                               │
-│    → get_caller_id_by_key(token)                         │
-│    → SHA256(token) 查 callers 表                         │
-│    → 命中 → 返回 client_id（如 "main_agent"）             │
-│    → 用 client_id 做发现隔离                              │
-│                                                          │
-│  MCP（eino_agent）：                                      │
-│    list_agents(caller_id="eino_agent", caller_key=token) │
-│    → verify_key("eino_agent", token)                     │
-│    → (client_id, SHA256(token)) 配对验证                  │
-│    → 用 caller_id 做发现隔离                              │
-│                                                          │
-└──────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph 创建["Caller 身份创建"]
+        direction LR
+        ENV[".env 预置<br/>REGISTRY_CALLER_SEEDS"] --> DB1["callers 表"]
+        ADMIN["管理员 POST /callers<br/>(运行时)"] --> DB1
+    end
+
+    subgraph 删除["Caller 身份吊销"]
+        DEL["管理员 DELETE /callers/{id}"] --> GONE["立即失效<br/>token → 401"]
+        ROT["管理员 PUT /callers/{id}/key"] --> GONE2["旧 key 失效<br/>返回新 key"]
+    end
+
+    subgraph REST["REST 鉴权流程（main_agent 等）"]
+        direction TB
+        R1["请求带 X-Registry-Key: token"] --> R2["get_caller_id_by_key(token)<br/>SHA256(token) 查表"]
+        R2 --> R3["命中 → 返回 client_id"]
+        R3 --> R4["用 client_id 做发现隔离"]
+    end
+
+    subgraph MCP["MCP 鉴权流程（eino_agent）"]
+        direction TB
+        M1["list_agents(caller_id, caller_key)"] --> M2["verify_key(client_id, key)<br/>配对验证"]
+        M2 --> M3["验证通过"]
+        M3 --> M4["用 caller_id 做发现隔离"]
+    end
 ```
 
 ---
 
-## 七、待实现：Agent Card 自动同步
+## 七、Agent Card 自动同步（已实现）
 
-> 当前探活只检查 HTTP 200，不解析 card 内容。
-> 以下功能**计划实现但尚未实现**，记录在此作为设计参考。
+> 探活时不只检查 HTTP 200，还解析 card 内容，自动同步 description/type，
+> 并验证 name 是否匹配（防伪造）。
 
-```
-当前探活：
-  GET {url}/.well-known/agent-card.json → 200? → last_ok=True
-
-改进后探活：
-  GET {url}/.well-known/agent-card.json → 200?
-    │
-    ├─ 200 → 解析 JSON
-    │         │
-    │         ├─ card.name == 注册时的 name?
-    │         │    ├─ 是 → last_ok=True
-    │         │    │       同时：
-    │         │    │       ① card.description 变了? → 更新 DB 的 description
-    │         │    │       ② card.type 变了? → 更新 DB 的 type
-    │         │    │
-    │         │    └─ 否 → last_ok=False（name 不匹配，可能是伪造）
-    │         │
-    │         └─ JSON 解析失败 → last_ok=True（兼容非标准 card）
-    │
-    └─ 非200/超时 → last_ok=False
+```mermaid
+flowchart TB
+    START["GET {url}/.well-known/agent-card.json"] --> STATUS{HTTP 状态}
+    STATUS -->|非200 / 超时| UNHEALTHY["last_ok = False"]
+    STATUS -->|200| PARSE{JSON 解析}
+    PARSE -->|解析失败| HEALTHY1["last_ok = True<br/>(兼容非标准 card)"]
+    PARSE -->|成功| NAME{card.name<br/>== 注册 name?}
+    NAME -->|否| UNHEALTHY["last_ok = False<br/>(可能伪造)"]
+    NAME -->|是| SYNC["last_ok = True<br/>同步 description/type<br/>(如有变化)"]
+    SYNC --> HEALTHY2["HEALTHY"]
 ```
 
 **好处**：
@@ -311,7 +273,7 @@ Caller（调用方）的生命周期独立于 Agent：
 | 场景 | 操作 |
 |------|------|
 | 新 Agent 要加入集群 | 管理员分配 token → Agent 配好 `REGISTRY_CLIENT_KEY` → Agent 启动自注册 |
-| Agent 改了描述 | 什么都不用做（card 自动同步，待实现）/ 当前：PUT /agents/{name} |
+| Agent 改了描述 | 什么都不用做（card 自动同步） |
 | Agent 换了端口 | `PUT /agents/{name}` body `{"url":"新地址"}` |
 | Agent 改了名字 | `DELETE /agents/{旧name}` + `POST /agents` 用新 name |
 | Agent 临时下线 | 什么都不用做（探活自动标 UNHEALTHY，恢复后自动回来） |
