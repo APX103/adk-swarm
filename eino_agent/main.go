@@ -592,6 +592,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.URL.Path == "/api/chat" && r.Method == http.MethodPost:
 		s.handleChatAPI(w, r)
 
+	case r.URL.Path == "/api/chat/stream" && r.Method == http.MethodPost:
+		s.handleChatStream(w, r)
+
 	case r.Method == http.MethodPost && (r.URL.Path == "/" || r.URL.Path == ""):
 		s.handleA2A(w, r)
 
@@ -664,6 +667,87 @@ func (s *Server) handleChatAPI(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(result)
+}
+
+// handleChatStream streams agent events as Server-Sent Events (SSE).
+// Each event is a JSON object with a "type" field: "tool_call", "tool_result",
+// "text" (assistant partial/final), or "done".
+func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Message string `json:"message"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Message == "" {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(AgentResult{Error: "empty or invalid message"})
+		return
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	ctx := r.Context()
+	runner := adk.NewRunner(ctx, adk.RunnerConfig{Agent: s.agent})
+	iter := runner.Query(ctx, body.Message)
+
+	var finalText string
+	for {
+		event, hasMore := iter.Next()
+		if !hasMore {
+			break
+		}
+		if event.Err != nil {
+			writeSSE(w, flusher, map[string]any{"type": "error", "error": event.Err.Error()})
+			return
+		}
+		if event.Output == nil || event.Output.MessageOutput == nil {
+			continue
+		}
+
+		msg, err := consumeMessageVariant(event.Output.MessageOutput)
+		if err != nil || msg == nil {
+			continue
+		}
+
+		switch msg.Role {
+		case schema.Assistant:
+			if len(msg.ToolCalls) > 0 {
+				for _, tc := range msg.ToolCalls {
+					writeSSE(w, flusher, map[string]any{
+						"type":      "tool_call",
+						"name":      tc.Function.Name,
+						"arguments": tc.Function.Arguments,
+					})
+				}
+			} else if msg.Content != "" {
+				finalText = msg.Content
+				writeSSE(w, flusher, map[string]any{"type": "text", "content": msg.Content})
+			}
+		case schema.Tool:
+			writeSSE(w, flusher, map[string]any{
+				"type":    "tool_result",
+				"name":    msg.Name,
+				"content": truncate(msg.Content, 500),
+			})
+		}
+	}
+
+	if finalText == "" {
+		finalText = "(Agent 未生成有效回复)"
+	}
+	writeSSE(w, flusher, map[string]any{"type": "done", "response": finalText})
+}
+
+func writeSSE(w http.ResponseWriter, flusher http.Flusher, data map[string]any) {
+	payload, _ := json.Marshal(data)
+	fmt.Fprintf(w, "data: %s\n\n", payload)
+	flusher.Flush()
 }
 
 func (s *Server) runAgent(ctx context.Context, query string) AgentResult {
