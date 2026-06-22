@@ -892,7 +892,7 @@ func main() {
 	apiKey := envOr("OPENAI_API_KEY", "")
 	baseURL := envOr("OPENAI_BASE_URL", "")
 	registryURL := envOr("AGENT_REGISTRY_URL", "")
-	selfName := "eino_agent"
+	selfName := envOr("REGISTRY_CLIENT_ID", "eino_agent")
 
 	chatModel, err := openai.NewChatModel(ctx, &openai.ChatModelConfig{
 		Model:   modelName,
