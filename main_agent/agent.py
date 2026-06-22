@@ -126,10 +126,11 @@ def _register_self(registry_url: str) -> None:
         response = requests.post(
             f"{registry_url.rstrip('/')}/agents", json=payload, timeout=10, headers=_REGISTRY_HEADERS
         )
-        if response.status_code == 201:
+        if response.status_code in (200, 201):
             print(f"[agent] registered self as main_agent @ {own_url}")
         elif response.status_code == 409:
-            # Already registered (e.g. persistent DB across restarts). That's fine.
+            # Legacy: older registry returned 409 for duplicates. Current registry
+            # does upsert (returns 200), but keep this for backward compat.
             pass
         else:
             print(

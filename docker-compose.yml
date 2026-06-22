@@ -29,8 +29,14 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_MODEL=${OPENAI_MODEL:-glm-4.5-air}
       - ARTIFACT_ROOT=/workspace/artifacts
+      - AGENT_REGISTRY_URL=http://agent_registry:8006
+      - SERVICE_NAME=frontend_agent
+      - REGISTRY_CLIENT_KEY=${REGISTRY_KEY_FRONTEND_AGENT}
     volumes:
       - frontend_workspace:/workspace
+    depends_on:
+      agent_registry:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8001/.well-known/agent-card.json"]
       interval: 10s

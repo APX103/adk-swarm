@@ -26,10 +26,10 @@ def register_self(name: str, service_name: str, port: int, description: str, age
     }
     try:
         resp = requests.post(f"{registry_url.rstrip('/')}/agents", json=payload, timeout=10, headers=headers)
-        if resp.status_code == 201:
+        if resp.status_code in (200, 201):
             print(f"[{name}] registered self @ {own_url}")
         elif resp.status_code == 409:
-            pass  # already registered (persistent DB across restarts)
+            pass  # legacy: older registry returned 409; current does upsert (200)
         else:
             print(f"[{name}] self-registration status {resp.status_code}: {resp.text[:120]}")
     except Exception as e:
